@@ -290,48 +290,6 @@ export default {
       bindable: true,
     },
 
-    // Editor Settings
-    enableEditorInteraction: {
-      label: {
-        en: "Enable Editor Interaction",
-      },
-      type: "OnOff",
-      section: "settings",
-      defaultValue: false,
-      bindable: true,
-      /* wwEditor:start */
-      bindingValidation: {
-        type: "boolean",
-        tooltip: "Allow map interaction in WeWeb editor"
-      },
-      propertyHelp: "When enabled, you can interact with the map directly in the WeWeb editor"
-      /* wwEditor:end */
-    },
-
-    editorInteractionMethod: {
-      label: {
-        en: "Editor Interaction Method",
-      },
-      type: "TextSelect",
-      section: "settings",
-      options: {
-        options: [
-          { value: "overlay", label: "Overlay Method (Recommended)" },
-          { value: "direct", label: "Direct Method" },
-          { value: "simple", label: "Simple Method" }
-        ]
-      },
-      defaultValue: "overlay",
-      bindable: true,
-      hidden: content => !content?.enableEditorInteraction,
-      /* wwEditor:start */
-      bindingValidation: {
-        type: "string",
-        tooltip: "Choose the method for editor interaction"
-      },
-      propertyHelp: "Try different methods if map interaction doesn't work"
-      /* wwEditor:end */
-    },
 
     // Styling
     mapStyle: {
@@ -349,6 +307,7 @@ export default {
     { name: "location-granted", label: "Location permission granted", event: { position: {} } },
     { name: "location-denied", label: "Location permission denied", event: {} },
     { name: "location-marked", label: "Location marked by click", event: { position: {} } },
-    { name: "map-ready", label: "Map initialized", event: {} }
+    { name: "map-ready", label: "Map initialized", event: {} },
+    { name: "privacy-mode-toggled", label: "Privacy mode toggled", event: { enabled: false, previousMode: "" } }
   ]
 };
