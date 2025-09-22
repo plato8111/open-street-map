@@ -51,7 +51,10 @@ export default {
       privacyUnit: 'km',
       tileLayers: {},
       resizeObserver: null,
-      resizeTimeout: null
+      resizeTimeout: null,
+      /* wwEditor:start */
+      editorOverlay: null
+      /* wwEditor:end */
     };
   },
   computed: {
@@ -170,6 +173,21 @@ export default {
       handler() { this.updateMarkers(); },
       deep: true
     },
+    /* wwEditor:start */
+    isEditing: {
+      handler(newVal) {
+        this.$nextTick(() => {
+          if (newVal && this.map) {
+            this.setupEditorEventForwarding();
+          } else if (this.editorOverlay) {
+            this.editorOverlay.remove();
+            this.editorOverlay = null;
+          }
+        });
+      },
+      immediate: true
+    }
+    /* wwEditor:end */
   },
 
   mounted() {
@@ -179,10 +197,31 @@ export default {
         this.requestUserLocation();
       }
 
+      // Apply interaction fixes multiple times to ensure they stick
+      setTimeout(() => {
+        this.applyInteractionFixes();
+        /* wwEditor:start */
+        if (this.isEditing) {
+          this.setupEditorEventForwarding();
+        }
+        /* wwEditor:end */
+      }, 200);
+
+      setTimeout(() => {
+        this.applyInteractionFixes();
+      }, 500);
     });
   },
 
   beforeUnmount() {
+    // Clean up editor overlay
+    /* wwEditor:start */
+    if (this.editorOverlay) {
+      this.editorOverlay.remove();
+      this.editorOverlay = null;
+    }
+    /* wwEditor:end */
+
     // Clean up resize observer
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
@@ -218,9 +257,24 @@ export default {
           this.map = null;
         }
 
-        // Create map with default settings
-        this.map = L.map(this.$refs.mapContainer).setView([lat, lng], zoom);
+        // Create map with optimized interaction settings
+        this.map = L.map(this.$refs.mapContainer, {
+          dragging: true,
+          touchZoom: true,
+          doubleClickZoom: true,
+          scrollWheelZoom: true,
+          boxZoom: true,
+          keyboard: true,
+          zoomControl: true,
+          attributionControl: true,
+          tap: true,
+          tapTolerance: 15,
+          touchZoom: 'center',
+          wheelPxPerZoomLevel: 60
+        }).setView([lat, lng], zoom);
 
+        // Apply immediate interaction fixes
+        this.applyInteractionFixes();
 
         this.setupTileLayers();
         this.selectedMapType = this.content?.mapType || 'osm';
@@ -238,6 +292,13 @@ export default {
           this.updateMarkers();
           this.initializePrivacyMode();
 
+          // Final interaction setup after map is ready
+          setTimeout(() => {
+            this.finalizeInteractions();
+            /* wwEditor:start */
+            this.setupEditorEventForwarding();
+            /* wwEditor:end */
+          }, 100);
 
           this.$emit('trigger-event', {
             name: 'map-ready',
@@ -249,7 +310,242 @@ export default {
       }
     },
 
+    applyInteractionFixes() {
+      if (!this.map) return;
 
+      const container = this.map.getContainer();
+      if (!container) return;
+
+      // Apply critical CSS overrides
+      const frontDocument = wwLib?.getFrontDocument ? wwLib.getFrontDocument() : document;
+
+      // Remove existing style if present and recreate
+      const existingStyle = frontDocument.getElementById('map-interaction-fix');
+      if (existingStyle) {
+        existingStyle.remove();
+      }
+
+      const style = frontDocument.createElement('style');
+      style.id = 'map-interaction-fix';
+      style.innerHTML = `
+        .openstreet-map, .openstreet-map * {
+          touch-action: pan-x pan-y !important;
+          -ms-touch-action: pan-x pan-y !important;
+        }
+        .leaflet-container {
+          cursor: grab !important;
+          touch-action: pan-x pan-y !important;
+          pointer-events: auto !important;
+          -ms-touch-action: pan-x pan-y !important;
+        }
+        .leaflet-container:active {
+          cursor: grabbing !important;
+        }
+        .leaflet-map-pane, .leaflet-tile-pane, .leaflet-objects-pane, .leaflet-pane {
+          pointer-events: auto !important;
+          touch-action: pan-x pan-y !important;
+          -ms-touch-action: pan-x pan-y !important;
+        }
+        .leaflet-control-zoom, .leaflet-control-zoom *, .leaflet-control {
+          pointer-events: auto !important;
+          touch-action: auto !important;
+          -ms-touch-action: auto !important;
+          cursor: pointer !important;
+        }
+      `;
+      frontDocument.head.appendChild(style);
+
+      // Force enable interactions immediately
+      if (this.map.dragging) this.map.dragging.enable();
+      if (this.map.touchZoom) this.map.touchZoom.enable();
+      if (this.map.scrollWheelZoom) this.map.scrollWheelZoom.enable();
+      if (this.map.doubleClickZoom) this.map.doubleClickZoom.enable();
+
+      // Apply direct styles to container as backup
+      container.style.setProperty('touch-action', 'pan-x pan-y', 'important');
+      container.style.setProperty('pointer-events', 'auto', 'important');
+      container.style.setProperty('cursor', 'grab', 'important');
+
+      const leafletContainer = container.querySelector('.leaflet-container');
+      if (leafletContainer) {
+        leafletContainer.style.setProperty('touch-action', 'pan-x pan-y', 'important');
+        leafletContainer.style.setProperty('pointer-events', 'auto', 'important');
+        leafletContainer.style.setProperty('cursor', 'grab', 'important');
+      }
+    },
+
+    finalizeInteractions() {
+      if (!this.map) return;
+
+      // Final check - ensure all interactions are enabled
+      const interactions = ['dragging', 'touchZoom', 'scrollWheelZoom', 'doubleClickZoom', 'boxZoom', 'keyboard'];
+      interactions.forEach(interaction => {
+        if (this.map[interaction] && !this.map[interaction].enabled()) {
+          this.map[interaction].enable();
+        }
+      });
+
+      console.log('Map interactions finalized:', {
+        dragging: this.map.dragging.enabled(),
+        touchZoom: this.map.touchZoom.enabled(),
+        scrollWheelZoom: this.map.scrollWheelZoom.enabled()
+      });
+    },
+
+    /* wwEditor:start */
+    setupEditorEventForwarding() {
+      if (!this.map) return;
+
+      const container = this.map.getContainer();
+      if (!container) return;
+
+      console.log('Setting up editor event forwarding...');
+
+      // Remove existing overlay if present
+      if (this.editorOverlay) {
+        this.editorOverlay.remove();
+        this.editorOverlay = null;
+      }
+
+      // Create a transparent overlay that captures ALL events over the map
+      const frontDocument = wwLib?.getFrontDocument ? wwLib.getFrontDocument() : document;
+      const overlay = frontDocument.createElement('div');
+      overlay.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 10000;
+        background: transparent;
+        pointer-events: auto;
+        cursor: grab;
+        touch-action: pan-x pan-y;
+      `;
+      overlay.className = 'editor-interaction-overlay';
+
+      // Get the leaflet container for event simulation
+      const leafletContainer = container.querySelector('.leaflet-container');
+      if (!leafletContainer) {
+        console.warn('Leaflet container not found');
+        return;
+      }
+
+      // Helper function to create and dispatch events
+      const forwardEvent = (originalEvent, targetElement) => {
+        const rect = targetElement.getBoundingClientRect();
+        const x = originalEvent.clientX - rect.left;
+        const y = originalEvent.clientY - rect.top;
+
+        // Create event with proper coordinates
+        let simulatedEvent;
+        try {
+          simulatedEvent = new originalEvent.constructor(originalEvent.type, {
+            bubbles: true,
+            cancelable: true,
+            clientX: originalEvent.clientX,
+            clientY: originalEvent.clientY,
+            screenX: originalEvent.screenX,
+            screenY: originalEvent.screenY,
+            button: originalEvent.button,
+            buttons: originalEvent.buttons,
+            deltaY: originalEvent.deltaY,
+            deltaX: originalEvent.deltaX,
+            shiftKey: originalEvent.shiftKey,
+            ctrlKey: originalEvent.ctrlKey,
+            altKey: originalEvent.altKey,
+            metaKey: originalEvent.metaKey
+          });
+        } catch (e) {
+          // Fallback for events that can't be constructed
+          return;
+        }
+
+        targetElement.dispatchEvent(simulatedEvent);
+      };
+
+      // Mouse events
+      overlay.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        overlay.style.cursor = 'grabbing';
+        forwardEvent(e, leafletContainer);
+      });
+
+      overlay.addEventListener('mousemove', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        forwardEvent(e, leafletContainer);
+      });
+
+      overlay.addEventListener('mouseup', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        overlay.style.cursor = 'grab';
+        forwardEvent(e, leafletContainer);
+      });
+
+      // Wheel events for zooming
+      overlay.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        forwardEvent(e, leafletContainer);
+      });
+
+      // Touch events for mobile
+      overlay.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (e.touches && e.touches.length > 0) {
+          const touch = e.touches[0];
+          const mouseEvent = new MouseEvent('mousedown', {
+            bubbles: true,
+            cancelable: true,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+            button: 0
+          });
+          leafletContainer.dispatchEvent(mouseEvent);
+        }
+      });
+
+      overlay.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (e.touches && e.touches.length > 0) {
+          const touch = e.touches[0];
+          const mouseEvent = new MouseEvent('mousemove', {
+            bubbles: true,
+            cancelable: true,
+            clientX: touch.clientX,
+            clientY: touch.clientY
+          });
+          leafletContainer.dispatchEvent(mouseEvent);
+        }
+      });
+
+      overlay.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const mouseEvent = new MouseEvent('mouseup', {
+          bubbles: true,
+          cancelable: true,
+          button: 0
+        });
+        leafletContainer.dispatchEvent(mouseEvent);
+      });
+
+      // Add overlay to map container
+      container.style.position = 'relative';
+      container.appendChild(overlay);
+      this.editorOverlay = overlay;
+
+      console.log('Editor event forwarding overlay created');
+    },
+    /* wwEditor:end */
 
     setupResizeObserver() {
       const frontWindow = wwLib?.getFrontWindow ? wwLib.getFrontWindow() : window;

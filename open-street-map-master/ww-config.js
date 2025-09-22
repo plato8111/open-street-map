@@ -289,15 +289,7 @@ export default {
       defaultValue: true,
       bindable: true,
     },
-    isOnline: {
-      label: {
-        en: "Is Online",
-      },
-      type: "OnOff",
-      section: "settings",
-      defaultValue: true,
-      bindable: true,
-    },
+
 
     // Styling
     mapStyle: {
