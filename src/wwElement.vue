@@ -23,6 +23,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import 'leaflet.heat';
 
 export default {
   props: {
@@ -51,7 +52,12 @@ export default {
       privacyUnit: 'km',
       tileLayers: {},
       resizeObserver: null,
-      resizeTimeout: null
+      resizeTimeout: null,
+      hardinessHeatmapLayer: null,
+      // Internal variables for NoCode users
+      selectedLocationVariable: null,
+      userLocationVariable: null,
+      clickedLocationVariable: null
     };
   },
   computed: {
@@ -124,6 +130,82 @@ export default {
 
     currentMapType() {
       return this.content?.mapType || 'osm';
+    },
+
+    hardinessZoneColors() {
+      return {
+        '1a': '#d6d6ff',
+        '1b': '#c4c4f2',
+        '2a': '#ababd9',
+        '2b': '#ebb0eb',
+        '3a': '#dd8fe8',
+        '3b': '#cf7ddb',
+        '4a': '#a66bff',
+        '4b': '#5a75ed',
+        '5a': '#73a1ff',
+        '5b': '#5ec9e0',
+        '6a': '#47ba47',
+        '6b': '#78c756',
+        '7a': '#abd669',
+        '7b': '#cddb70',
+        '8a': '#edda85',
+        '8b': '#ebcb57',
+        '9a': '#dbb64f',
+        '9b': '#f5b678',
+        '10a': '#da9132',
+        '10b': '#e6781e',
+        '11a': '#e6561e',
+        '11b': '#e88564',
+        '12a': '#d4594e',
+        '12b': '#b51228',
+        '13a': '#962f1d',
+        '13b': '#751a00'
+      };
+    },
+
+    userHardinessZoneColor() {
+      const zone = this.content?.userHardinessZone || '7a';
+      return this.hardinessZoneColors[zone] || '#abd669';
+    },
+
+    processedUsersHardinessData() {
+      const users = this.content?.usersHardinessData || [];
+      if (!Array.isArray(users)) return [];
+
+      const { resolveMappingFormula } = wwLib?.wwFormula?.useFormula() || {};
+
+      return users.map(user => {
+        if (!resolveMappingFormula) {
+          return {
+            lat: user.lat || 0,
+            lng: user.lng || 0,
+            hardinessZone: user.hardinessZone || '7a',
+            name: user.name || 'User',
+            originalItem: user,
+            ...user
+          };
+        }
+
+        const lat = resolveMappingFormula(this.content?.usersLatFormula, user) ?? user.lat;
+        const lng = resolveMappingFormula(this.content?.usersLngFormula, user) ?? user.lng;
+        const zone = resolveMappingFormula(this.content?.usersZoneFormula, user) ?? user.hardinessZone;
+
+        return {
+          lat: parseFloat(lat) || 0,
+          lng: parseFloat(lng) || 0,
+          hardinessZone: zone || '7a',
+          name: user.name || 'User',
+          originalItem: user,
+          ...user
+        };
+      }).filter(user =>
+        !isNaN(user.lat) &&
+        !isNaN(user.lng) &&
+        user.lat >= -90 &&
+        user.lat <= 90 &&
+        user.lng >= -180 &&
+        user.lng <= 180
+      );
     }
   },
 
@@ -143,6 +225,34 @@ export default {
       this.$nextTick(() => {
         this.updatePrivacyMode();
       });
+    },
+    'content.showUserLocation': function() {
+      this.$nextTick(() => {
+        this.updatePrivacyMode();
+      });
+    },
+    'content.showHardinessHeatmap': function() {
+      this.$nextTick(() => {
+        this.updateHardinessHeatmap();
+      });
+    },
+    'content.userHardinessZone': function() {
+      this.$nextTick(() => {
+        this.updateHardinessHeatmap();
+      });
+    },
+    'content.hardinessHeatmapRadius': function() {
+      this.$nextTick(() => {
+        this.updateHardinessHeatmap();
+      });
+    },
+    processedUsersHardinessData: {
+      handler() {
+        this.$nextTick(() => {
+          this.updateHardinessHeatmap();
+        });
+      },
+      deep: true
     },
     'content.privacyRadius': function() {
       this.$nextTick(() => {
@@ -170,19 +280,57 @@ export default {
       handler() { this.updateMarkers(); },
       deep: true
     },
+    'content.mapStyle': function() {
+      this.$nextTick(() => {
+        this.safeInvalidateSize();
+      });
+    },
+    'content.allowMapTypeSelection': function() {
+      // Force re-render of map type selector
+      this.$forceUpdate();
+    },
+    'content.allowClickToMark': function() {
+      // Update instructions visibility
+      this.$forceUpdate();
+    },
+    'content.requestGeolocation': function(newVal) {
+      if (newVal && !this.geolocationRequested) {
+        this.requestUserLocation();
+      }
+    },
+    'content.centerOnUserLocation': function() {
+      if (this.userExactLat && this.userExactLng && this.content?.centerOnUserLocation) {
+        this.map?.setView([this.userExactLat, this.userExactLng], this.content?.initialZoom || 15);
+      }
+    },
+    'content.isOnline': function() {
+      // Update marker colors based on online status
+      this.updateMarkers();
+      if (this.userLocationMarker) {
+        this.updateUserLocationMarker();
+      }
+    },
   },
 
   mounted() {
+    // Initialize internal variables for NoCode users
+    this.initializeInternalVariables();
+
     this.$nextTick(() => {
       this.initializeMap();
       if (this.content?.requestGeolocation) {
         this.requestUserLocation();
       }
-
     });
   },
 
   beforeUnmount() {
+    // Clean up heatmap
+    if (this.hardinessHeatmapLayer) {
+      this.map?.removeLayer(this.hardinessHeatmapLayer);
+      this.hardinessHeatmapLayer = null;
+    }
+
     // Clean up resize observer
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
@@ -201,6 +349,34 @@ export default {
   },
 
   methods: {
+    initializeInternalVariables() {
+      // Initialize internal variables for NoCode users
+      try {
+        this.selectedLocationVariable = wwLib?.wwVariable?.useComponentVariable({
+          uid: this.uid,
+          name: 'selectedLocation',
+          type: 'object',
+          defaultValue: null,
+        });
+
+        this.userLocationVariable = wwLib?.wwVariable?.useComponentVariable({
+          uid: this.uid,
+          name: 'userLocation',
+          type: 'object',
+          defaultValue: null,
+        });
+
+        this.clickedLocationVariable = wwLib?.wwVariable?.useComponentVariable({
+          uid: this.uid,
+          name: 'clickedLocation',
+          type: 'object',
+          defaultValue: null,
+        });
+      } catch (error) {
+        console.warn('Failed to initialize internal variables:', error);
+      }
+    },
+
     initializeMap() {
       if (!this.$refs.mapContainer) {
         console.warn('Map container not ready');
@@ -218,17 +394,15 @@ export default {
           this.map = null;
         }
 
-        // Create map with default settings
+        // Simple map initialization - no complex interactions
         this.map = L.map(this.$refs.mapContainer).setView([lat, lng], zoom);
-
 
         this.setupTileLayers();
         this.selectedMapType = this.content?.mapType || 'osm';
         this.updateMapType();
 
-        if (this.content?.allowClickToMark) {
-          this.map.on('click', this.onMapClick);
-        }
+        // Add click handler for coordinate events
+        this.map.on('click', this.onMapClick);
 
         // Set up resize observer for dynamic resizing
         this.setupResizeObserver();
@@ -237,7 +411,7 @@ export default {
         this.map.whenReady(() => {
           this.updateMarkers();
           this.initializePrivacyMode();
-
+          this.updateHardinessHeatmap();
 
           this.$emit('trigger-event', {
             name: 'map-ready',
@@ -434,12 +608,32 @@ export default {
       }
     },
 
+    updateUserLocationMarker() {
+      if (!this.userLocationMarker || !this.userExactLat || !this.userExactLng) return;
+
+      try {
+        // Update marker color based on online status
+        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        const newIcon = L.divIcon({
+          className: 'user-location-marker',
+          html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        });
+
+        this.userLocationMarker.setIcon(newIcon);
+      } catch (error) {
+        console.error('Error updating user location marker:', error);
+      }
+    },
+
     requestUserLocation() {
-      if (!navigator.geolocation) return;
+      const frontWindow = wwLib?.getFrontWindow() || window;
+      if (!frontWindow.navigator?.geolocation) return;
 
       this.geolocationRequested = true;
 
-      navigator.geolocation.getCurrentPosition(
+      frontWindow.navigator.geolocation.getCurrentPosition(
         this.onLocationSuccess,
         this.onLocationError,
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
@@ -459,6 +653,15 @@ export default {
       this.userExactLat = latitude;
       this.userExactLng = longitude;
 
+      // Update internal variable for NoCode users
+      if (this.userLocationVariable?.setValue) {
+        this.userLocationVariable.setValue({
+          lat: latitude,
+          lng: longitude,
+          timestamp: new Date().toISOString()
+        });
+      }
+
       try {
         // Remove existing marker if any
         if (this.userLocationMarker) {
@@ -466,10 +669,11 @@ export default {
         }
 
         // Create marker at EXACT location (will be shown/hidden based on privacy mode)
+        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
         this.userLocationMarker = L.marker([latitude, longitude], {
           icon: L.divIcon({
             className: 'user-location-marker',
-            html: '<div class="user-location-dot"></div>',
+            html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
             iconSize: [20, 20],
             iconAnchor: [10, 10]
           })
@@ -509,9 +713,29 @@ export default {
     },
 
     onMapClick(e) {
-      if (!this.content?.allowClickToMark || !this.map) return;
+      if (!this.map) return;
 
       const { lat, lng } = e.latlng;
+
+      // Always emit map click event for debugging/console purposes
+      this.$emit('trigger-event', {
+        name: 'map-click',
+        event: {
+          position: { lat, lng }
+        }
+      });
+
+      // Update internal variable for NoCode users
+      if (this.clickedLocationVariable?.setValue) {
+        this.clickedLocationVariable.setValue({
+          lat,
+          lng,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Only proceed with location marking if enabled
+      if (!this.content?.allowClickToMark) return;
 
       try {
         // Remove existing marked location marker
@@ -520,10 +744,11 @@ export default {
         }
 
         // Create new marked location marker
+        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
         this.userMarkedLocationMarker = L.marker([lat, lng], {
           icon: L.divIcon({
             className: 'user-marked-location',
-            html: '<div class="user-marked-dot"></div>',
+            html: `<div class="user-marked-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
             iconSize: [20, 20],
             iconAnchor: [10, 10]
           })
@@ -559,13 +784,13 @@ export default {
 
       // Handle user location marker visibility
       if (this.userLocationMarker) {
-        if (this.content?.enablePrivacyMode) {
-          // Privacy ON: Hide exact marker
+        if (this.content?.enablePrivacyMode || !this.content?.showUserLocation) {
+          // Privacy ON OR showUserLocation OFF: Hide exact marker
           if (this.map.hasLayer(this.userLocationMarker)) {
             this.map.removeLayer(this.userLocationMarker);
           }
         } else {
-          // Privacy OFF: Show exact marker
+          // Privacy OFF AND showUserLocation ON: Show exact marker
           if (!this.map.hasLayer(this.userLocationMarker)) {
             this.userLocationMarker.addTo(this.map);
             this.userLocationMarker.bindPopup('Your exact location');
@@ -599,8 +824,8 @@ export default {
         this.privacyCircle = null;
       }
 
-      // Only show circle in privacy mode AND when we have a location
-      if (this.content?.enablePrivacyMode && this.map) {
+      // Only show circle in privacy mode AND when we have a location AND showUserLocation is enabled
+      if (this.content?.enablePrivacyMode && this.content?.showUserLocation && this.map) {
         let centerLat, centerLng;
 
         if (this.userExactLat && this.userExactLng) {
@@ -621,11 +846,12 @@ export default {
         }
 
         const radiusInMeters = this.getPrivacyRadiusInKm() * 1000;
+        const circleColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
 
         this.privacyCircle = L.circle([centerLat, centerLng], {
           radius: radiusInMeters,
-          color: '#ff6b6b',
-          fillColor: '#ff6b6b',
+          color: circleColor,
+          fillColor: circleColor,
           fillOpacity: 0.2,
           weight: 2,
           dashArray: '5, 5'
@@ -673,6 +899,81 @@ export default {
         lat: distance * Math.cos(angle),
         lng: distance * Math.sin(angle)
       };
+    },
+
+    updateHardinessHeatmap() {
+      // Remove existing heatmap layers
+      if (this.hardinessHeatmapLayer) {
+        this.map.removeLayer(this.hardinessHeatmapLayer);
+        this.hardinessHeatmapLayer = null;
+      }
+
+      // Only show heatmap if enabled and we have users data
+      if (!this.content?.showHardinessHeatmap || !this.map) {
+        return;
+      }
+
+      const users = this.processedUsersHardinessData;
+      if (!users.length) {
+        // No users data - don't show anything
+        return;
+      }
+
+      // Create multi-user heatmap
+      this.createMultiUserHeatmap(users);
+    },
+
+    createMultiUserHeatmap(users) {
+      // Convert hardiness zones to numeric values for intensity
+      const zoneToIntensity = {
+        '1a': 0.1, '1b': 0.15, '2a': 0.2, '2b': 0.25, '3a': 0.3, '3b': 0.35,
+        '4a': 0.4, '4b': 0.45, '5a': 0.5, '5b': 0.55, '6a': 0.6, '6b': 0.65,
+        '7a': 0.7, '7b': 0.75, '8a': 0.8, '8b': 0.85, '9a': 0.9, '9b': 0.95,
+        '10a': 1.0, '10b': 1.05, '11a': 1.1, '11b': 1.15, '12a': 1.2, '12b': 1.25,
+        '13a': 1.3, '13b': 1.35
+      };
+
+      // Create heatmap data points: [lat, lng, intensity]
+      const heatmapData = users.map(user => {
+        const intensity = zoneToIntensity[user.hardinessZone] || 0.7;
+        return [user.lat, user.lng, intensity];
+      });
+
+      // Create the heatmap layer
+      this.hardinessHeatmapLayer = L.heatLayer(heatmapData, {
+        radius: this.content?.hardinessHeatmapRadius || 50,
+        blur: 25,
+        maxZoom: 17,
+        max: 1.4,
+        gradient: {
+          0.0: '#d6d6ff',  // Zone 1a
+          0.1: '#c4c4f2',  // Zone 1b
+          0.15: '#ababd9', // Zone 2a
+          0.2: '#ebb0eb',  // Zone 2b
+          0.25: '#dd8fe8', // Zone 3a
+          0.3: '#cf7ddb',  // Zone 3b
+          0.35: '#a66bff', // Zone 4a
+          0.4: '#5a75ed',  // Zone 4b
+          0.45: '#73a1ff', // Zone 5a
+          0.5: '#5ec9e0',  // Zone 5b
+          0.55: '#47ba47', // Zone 6a
+          0.6: '#78c756',  // Zone 6b
+          0.65: '#abd669', // Zone 7a
+          0.7: '#cddb70',  // Zone 7b
+          0.75: '#edda85', // Zone 8a
+          0.8: '#ebcb57',  // Zone 8b
+          0.85: '#dbb64f', // Zone 9a
+          0.9: '#f5b678',  // Zone 9b
+          0.95: '#da9132', // Zone 10a
+          1.0: '#e6781e',  // Zone 10b
+          1.05: '#e6561e', // Zone 11a
+          1.1: '#e88564',  // Zone 11b
+          1.15: '#d4594e', // Zone 12a
+          1.2: '#b51228',  // Zone 12b
+          1.25: '#962f1d', // Zone 13a
+          1.3: '#751a00'   // Zone 13b
+        }
+      }).addTo(this.map);
     },
 
   }

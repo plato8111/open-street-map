@@ -299,6 +299,122 @@ export default {
       bindable: true,
     },
 
+    // USDA Hardiness Zone from database
+    userHardinessZone: {
+      label: {
+        en: "User Hardiness Zone",
+      },
+      type: "Text",
+      section: "hardiness",
+      defaultValue: "7a",
+      bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "USDA Hardiness Zone from user profile (1a-13b)"
+      },
+      /* wwEditor:end */
+    },
+    usersHardinessData: {
+      label: {
+        en: "Users Hardiness Data",
+      },
+      type: "Array",
+      section: "hardiness",
+      bindable: true,
+      defaultValue: [],
+      options: {
+        expandable: true,
+        getItemLabel(item) {
+          return `User - Zone ${item.hardinessZone || 'Unknown'}` + (item.name ? ` (${item.name})` : '');
+        },
+        item: {
+          type: "Object",
+          defaultValue: { lat: 51.505, lng: -0.09, hardinessZone: "7a", name: "User" },
+          options: {
+            item: {
+              lat: { label: { en: "Latitude" }, type: "Number", step: 0.001 },
+              lng: { label: { en: "Longitude" }, type: "Number", step: 0.001 },
+              hardinessZone: { label: { en: "Hardiness Zone" }, type: "Text" },
+              name: { label: { en: "User Name" }, type: "Text" }
+            }
+          }
+        }
+      },
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "array",
+        tooltip: "Array of users with lat, lng, hardinessZone properties"
+      },
+      /* wwEditor:end */
+    },
+
+    // Formula properties for dynamic field mapping
+    usersLatFormula: {
+      label: { en: "Users Latitude Field" },
+      type: "Formula",
+      section: "hardiness",
+      options: content => ({
+        template: Array.isArray(content.usersHardinessData) && content.usersHardinessData.length > 0 ? content.usersHardinessData[0] : null,
+      }),
+      defaultValue: {
+        type: "f",
+        code: "context.mapping?.['lat']",
+      },
+      hidden: (content, sidepanelContent, boundProps) =>
+        !Array.isArray(content.usersHardinessData) || !content.usersHardinessData?.length || !boundProps.usersHardinessData,
+    },
+    usersLngFormula: {
+      label: { en: "Users Longitude Field" },
+      type: "Formula",
+      section: "hardiness",
+      options: content => ({
+        template: Array.isArray(content.usersHardinessData) && content.usersHardinessData.length > 0 ? content.usersHardinessData[0] : null,
+      }),
+      defaultValue: {
+        type: "f",
+        code: "context.mapping?.['lng']",
+      },
+      hidden: (content, sidepanelContent, boundProps) =>
+        !Array.isArray(content.usersHardinessData) || !content.usersHardinessData?.length || !boundProps.usersHardinessData,
+    },
+    usersZoneFormula: {
+      label: { en: "Users Hardiness Zone Field" },
+      type: "Formula",
+      section: "hardiness",
+      options: content => ({
+        template: Array.isArray(content.usersHardinessData) && content.usersHardinessData.length > 0 ? content.usersHardinessData[0] : null,
+      }),
+      defaultValue: {
+        type: "f",
+        code: "context.mapping?.['hardinessZone']",
+      },
+      hidden: (content, sidepanelContent, boundProps) =>
+        !Array.isArray(content.usersHardinessData) || !content.usersHardinessData?.length || !boundProps.usersHardinessData,
+    },
+    showHardinessHeatmap: {
+      label: {
+        en: "Show Hardiness Heatmap",
+      },
+      type: "OnOff",
+      section: "hardiness",
+      defaultValue: false,
+      bindable: true,
+    },
+    hardinessHeatmapRadius: {
+      label: {
+        en: "Heatmap Radius (km)",
+      },
+      type: "Number",
+      section: "hardiness",
+      defaultValue: 50,
+      min: 10,
+      max: 200,
+      step: 10,
+      bindable: true,
+      hidden: content => !content?.showHardinessHeatmap,
+    },
+
     // Styling
     mapStyle: {
       label: {
@@ -315,6 +431,7 @@ export default {
     { name: "location-granted", label: "Location permission granted", event: { position: {} } },
     { name: "location-denied", label: "Location permission denied", event: {} },
     { name: "location-marked", label: "Location marked by click", event: { position: {} } },
+    { name: "map-click", label: "Map clicked", event: { position: {} } },
     { name: "map-ready", label: "Map initialized", event: {} },
     { name: "privacy-mode-toggled", label: "Privacy mode toggled", event: { enabled: false, previousMode: "" } }
   ]
