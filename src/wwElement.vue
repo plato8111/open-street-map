@@ -321,6 +321,11 @@ export default {
       if (this.content?.requestGeolocation) {
         this.requestUserLocation();
       }
+
+      // Ensure map is properly sized after DOM settles
+      setTimeout(() => {
+        this.safeInvalidateSize();
+      }, 100);
     });
   },
 
@@ -548,16 +553,7 @@ export default {
           markers.forEach(markerData => {
             const marker = L.marker([markerData.lat, markerData.lng]);
 
-            if (markerData.name || markerData.description) {
-              const popupContent = `
-                <div class="marker-popup">
-                  ${markerData.name ? `<h4>${markerData.name}</h4>` : ''}
-                  ${markerData.description ? `<p>${markerData.description}</p>` : ''}
-                </div>
-              `;
-              marker.bindPopup(popupContent);
-            }
-
+            // Remove default popup - use custom WeWeb popup instead
             marker.on('click', () => {
               this.$emit('trigger-event', {
                 name: 'marker-click',
@@ -578,16 +574,7 @@ export default {
           markers.forEach(markerData => {
             const marker = L.marker([markerData.lat, markerData.lng]);
 
-            if (markerData.name || markerData.description) {
-              const popupContent = `
-                <div class="marker-popup">
-                  ${markerData.name ? `<h4>${markerData.name}</h4>` : ''}
-                  ${markerData.description ? `<p>${markerData.description}</p>` : ''}
-                </div>
-              `;
-              marker.bindPopup(popupContent);
-            }
-
+            // Remove default popup - use custom WeWeb popup instead
             marker.on('click', () => {
               this.$emit('trigger-event', {
                 name: 'marker-click',
@@ -682,7 +669,16 @@ export default {
         // Show exact marker ONLY when privacy mode is OFF
         if (!this.content?.enablePrivacyMode) {
           this.userLocationMarker.addTo(this.map);
-          this.userLocationMarker.bindPopup('Your exact location');
+          // Remove default popup - use custom WeWeb popup instead
+          this.userLocationMarker.on('click', () => {
+            this.$emit('trigger-event', {
+              name: 'user-location-click',
+              event: {
+                position: { lat: latitude, lng: longitude },
+                type: 'user-location'
+              }
+            });
+          });
         }
 
         // Center map on user location if requested
@@ -757,7 +753,17 @@ export default {
         // Show marker only if privacy mode is OFF
         if (!this.content?.enablePrivacyMode) {
           this.userMarkedLocationMarker.addTo(this.map);
-          this.userMarkedLocationMarker.bindPopup('Your marked location');
+          // Remove default popup - use custom WeWeb popup instead
+          this.userMarkedLocationMarker.on('click', () => {
+            const pos = this.userMarkedLocationMarker.getLatLng();
+            this.$emit('trigger-event', {
+              name: 'marked-location-click',
+              event: {
+                position: { lat: pos.lat, lng: pos.lng },
+                type: 'marked-location'
+              }
+            });
+          });
         }
 
         // Update privacy circle to reflect new location
@@ -985,10 +991,12 @@ export default {
   position: relative;
   width: 100%;
   height: var(--map-height);
+  min-height: 200px; /* Ensure parent has minimum dimensions */
 
   .map-container {
     width: 100%;
     height: 100%;
+    min-height: 200px; /* Ensure minimum dimensions for Leaflet */
     background: #f0f0f0;
     position: relative;
   }
@@ -1039,6 +1047,26 @@ export default {
       background: white;
     }
   }
+}
+
+/* Fix marker cluster hover effects */
+:global(.marker-cluster) {
+  background: rgba(181, 226, 140, 0.6) !important;
+  border: 2px solid rgba(110, 204, 57, 0.8) !important;
+  border-radius: 50% !important;
+}
+
+:global(.marker-cluster:hover) {
+  background: rgba(181, 226, 140, 0.8) !important;
+  border-color: rgba(110, 204, 57, 1) !important;
+  box-shadow: none !important;
+}
+
+:global(.marker-cluster div) {
+  background: transparent !important;
+  color: #000 !important;
+  font-weight: bold !important;
+  text-shadow: 1px 1px 1px rgba(255, 255, 255, 0.8) !important;
 }
 
 :global(.user-marked-location) {

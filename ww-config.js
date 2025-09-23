@@ -428,6 +428,8 @@ export default {
   },
   triggerEvents: [
     { name: "marker-click", label: "Marker clicked", event: { marker: {}, position: {} } },
+    { name: "user-location-click", label: "User location marker clicked", event: { position: {}, type: "" } },
+    { name: "marked-location-click", label: "Marked location clicked", event: { position: {}, type: "" } },
     { name: "location-granted", label: "Location permission granted", event: { position: {} } },
     { name: "location-denied", label: "Location permission denied", event: {} },
     { name: "location-marked", label: "Location marked by click", event: { position: {} } },
