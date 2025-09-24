@@ -25,6 +25,14 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.heat';
 
+// Fix Leaflet's default marker icon issue
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
+});
+
 export default {
   props: {
     uid: { type: String, required: true },
@@ -399,8 +407,16 @@ export default {
           this.map = null;
         }
 
-        // Simple map initialization - no complex interactions
-        this.map = L.map(this.$refs.mapContainer).setView([lat, lng], zoom);
+        // Simple map initialization - enable all interactions
+        this.map = L.map(this.$refs.mapContainer, {
+          dragging: true,
+          touchZoom: true,
+          doubleClickZoom: true,
+          scrollWheelZoom: true,
+          boxZoom: true,
+          keyboard: true,
+          zoomControl: true
+        }).setView([lat, lng], zoom);
 
         this.setupTileLayers();
         this.selectedMapType = this.content?.mapType || 'osm';
@@ -547,7 +563,10 @@ export default {
         if (this.content?.enableClustering) {
           this.clusterGroup = L.markerClusterGroup({
             maxClusterRadius: 50,
-            disableClusteringAtZoom: this.content?.clusterMaxZoom || 15
+            disableClusteringAtZoom: this.content?.clusterMaxZoom || 15,
+            showCoverageOnHover: false,
+            zoomToBoundsOnClick: true,
+            spiderfyOnMaxZoom: true
           });
 
           markers.forEach(markerData => {
@@ -799,7 +818,6 @@ export default {
           // Privacy OFF AND showUserLocation ON: Show exact marker
           if (!this.map.hasLayer(this.userLocationMarker)) {
             this.userLocationMarker.addTo(this.map);
-            this.userLocationMarker.bindPopup('Your exact location');
           }
         }
       }
@@ -862,8 +880,6 @@ export default {
           weight: 2,
           dashArray: '5, 5'
         }).addTo(this.map);
-
-        this.privacyCircle.bindPopup(`Privacy radius: ${this.getPrivacyRadiusInKm()} ${this.content?.privacyUnit || 'km'} - Position randomized for privacy`);
       }
     },
 
