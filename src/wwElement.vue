@@ -1,9 +1,7 @@
 <template>
   <div class="openstreet-map" :style="mapContainerStyle">
-
     <!-- Map Container -->
     <div ref="mapContainer" class="map-container" :style="mapStyle"></div>
-
 
     <!-- Location Instructions -->
     <div v-if="showLocationInstructions" class="location-instructions">
@@ -18,12 +16,15 @@
 </template>
 
 <script>
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.heat';
+import { boundaryAPI, boundaryCache, getSupabaseClient } from './supabaseClient.js';
+import { vectorTileClient } from './vectorTileClient.js';
 
 // Fix Leaflet's default marker icon issue
 delete L.Icon.Default.prototype._getIconUrl;
@@ -42,59 +43,124 @@ export default {
     /* wwEditor:end */
   },
   emits: ['trigger-event'],
-  data() {
-    return {
-      map: null,
-      markersLayer: null,
-      clusterGroup: null,
-      userLocationMarker: null,
-      userMarkedLocationMarker: null,
-      privacyCircle: null,
-      selectedMapType: 'osm',
-      geolocationRequested: false,
-      geolocationDenied: false,
-      showUserLocation: false,
-      userExactLat: null,
-      userExactLng: null,
-      privacyRadiusValue: 1,
-      privacyUnit: 'km',
-      tileLayers: {},
-      resizeObserver: null,
-      resizeTimeout: null,
-      hardinessHeatmapLayer: null,
-      // Internal variables for NoCode users
-      selectedLocationVariable: null,
-      userLocationVariable: null,
-      clickedLocationVariable: null
-    };
-  },
-  computed: {
+  setup(props, { emit }) {
+    // Editor state
     /* wwEditor:start */
-    isEditing() {
-      return this.wwEditorState?.isEditing;
-    },
+    const isEditing = computed(() => props.wwEditorState?.isEditing);
     /* wwEditor:end */
 
-    mapContainerStyle() {
-      return {
-        '--map-height': this.content?.mapHeight || '100%',
-        '--border-radius': this.content?.mapStyle || '8px'
-      };
-    },
+    // Non-reactive state (map instances)
+    const map = ref(null);
+    const markersLayer = ref(null);
+    const clusterGroup = ref(null);
+    const userLocationMarker = ref(null);
+    const userMarkedLocationMarker = ref(null);
+    const privacyCircle = ref(null);
+    const tileLayers = ref({});
+    const resizeObserver = ref(null);
+    const resizeTimeout = ref(null);
+    const hardinessHeatmapLayer = ref(null);
+    const countryBoundaryLayer = ref(null);
+    const stateBoundaryLayer = ref(null);
+    const selectedCountry = ref(null);
+    const selectedState = ref(null);
+    const hoveredCountry = ref(null);
+    const hoveredState = ref(null);
+    const geocodingDebounceTimer = ref(null);
 
-    mapStyle() {
-      return {
-        height: 'var(--map-height)',
-        borderRadius: 'var(--border-radius)',
-        overflow: 'hidden'
-      };
-    },
+    // Component state
+    const geolocationRequested = ref(false);
+    const geolocationDenied = ref(false);
+    const showUserLocation = ref(false);
+    const userExactLat = ref(null);
+    const userExactLng = ref(null);
 
-    processedMarkers() {
-      const markers = this.content?.markers || [];
+    // Template refs
+    const mapContainer = ref(null);
+
+    // Internal variables for NoCode users
+    const { value: selectedLocation, setValue: setSelectedLocation } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedLocation',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    const { value: userLocation, setValue: setUserLocation } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'userLocation',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    const { value: clickedLocation, setValue: setClickedLocation } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'clickedLocation',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    const { value: selectedCountryData, setValue: setSelectedCountryData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedCountry',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    const { value: selectedStateData, setValue: setSelectedStateData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedState',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    const { value: geocodedAddress, setValue: setGeocodedAddress } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'geocodedAddress',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    // Computed styles
+    const mapContainerStyle = computed(() => ({
+      '--map-height': props.content?.mapHeight || '100%',
+      '--border-radius': props.content?.mapStyle || '8px'
+    }));
+
+    const mapStyle = computed(() => ({
+      height: 'var(--map-height)',
+      borderRadius: 'var(--border-radius)',
+      overflow: 'hidden'
+    }));
+
+    // Computed properties
+    const currentMapType = computed(() => props.content?.mapType || 'osm');
+
+    const showLocationInstructions = computed(() => {
+      return props.content?.allowClickToMark && (!showUserLocation.value || geolocationDenied.value);
+    });
+
+    const hardinessZoneColors = computed(() => ({
+      '1a': '#d6d6ff', '1b': '#c4c4f2', '2a': '#ababd9', '2b': '#ebb0eb',
+      '3a': '#dd8fe8', '3b': '#cf7ddb', '4a': '#a66bff', '4b': '#5a75ed',
+      '5a': '#73a1ff', '5b': '#5ec9e0', '6a': '#47ba47', '6b': '#78c756',
+      '7a': '#abd669', '7b': '#cddb70', '8a': '#edda85', '8b': '#ebcb57',
+      '9a': '#dbb64f', '9b': '#f5b678', '10a': '#da9132', '10b': '#e6781e',
+      '11a': '#e6561e', '11b': '#e88564', '12a': '#d4594e', '12b': '#b51228',
+      '13a': '#962f1d', '13b': '#751a00'
+    }));
+
+    const userHardinessZoneColor = computed(() => {
+      const zone = props.content?.userHardinessZone || '7a';
+      return hardinessZoneColors.value[zone] || '#abd669';
+    });
+
+    const processedMarkers = computed(() => {
+      const markers = props.content?.markers || [];
       if (!Array.isArray(markers)) return [];
 
-      const { resolveMappingFormula } = wwLib?.wwFormula?.useFormula() || {};
+      const useFormula = wwLib?.wwFormula?.useFormula;
+      const { resolveMappingFormula } = useFormula ? useFormula() : {};
 
       return markers.map(marker => {
         if (!resolveMappingFormula) {
@@ -109,9 +175,9 @@ export default {
           };
         }
 
-        const lat = resolveMappingFormula(this.content?.markersLatFormula, marker) ?? marker.lat;
-        const lng = resolveMappingFormula(this.content?.markersLngFormula, marker) ?? marker.lng;
-        const name = resolveMappingFormula(this.content?.markersNameFormula, marker) ?? marker.name;
+        const lat = resolveMappingFormula(props.content?.markersLatFormula, marker) ?? marker.lat;
+        const lng = resolveMappingFormula(props.content?.markersLngFormula, marker) ?? marker.lng;
+        const name = resolveMappingFormula(props.content?.markersNameFormula, marker) ?? marker.name;
 
         return {
           id: marker.id || `marker-${Date.now()}-${Math.random()}`,
@@ -130,57 +196,14 @@ export default {
         marker.lng >= -180 &&
         marker.lng <= 180
       );
-    },
+    });
 
-    showLocationInstructions() {
-      return this.content?.allowClickToMark && (!this.showUserLocation || this.geolocationDenied);
-    },
-
-    currentMapType() {
-      return this.content?.mapType || 'osm';
-    },
-
-    hardinessZoneColors() {
-      return {
-        '1a': '#d6d6ff',
-        '1b': '#c4c4f2',
-        '2a': '#ababd9',
-        '2b': '#ebb0eb',
-        '3a': '#dd8fe8',
-        '3b': '#cf7ddb',
-        '4a': '#a66bff',
-        '4b': '#5a75ed',
-        '5a': '#73a1ff',
-        '5b': '#5ec9e0',
-        '6a': '#47ba47',
-        '6b': '#78c756',
-        '7a': '#abd669',
-        '7b': '#cddb70',
-        '8a': '#edda85',
-        '8b': '#ebcb57',
-        '9a': '#dbb64f',
-        '9b': '#f5b678',
-        '10a': '#da9132',
-        '10b': '#e6781e',
-        '11a': '#e6561e',
-        '11b': '#e88564',
-        '12a': '#d4594e',
-        '12b': '#b51228',
-        '13a': '#962f1d',
-        '13b': '#751a00'
-      };
-    },
-
-    userHardinessZoneColor() {
-      const zone = this.content?.userHardinessZone || '7a';
-      return this.hardinessZoneColors[zone] || '#abd669';
-    },
-
-    processedUsersHardinessData() {
-      const users = this.content?.usersHardinessData || [];
+    const processedUsersHardinessData = computed(() => {
+      const users = props.content?.usersHardinessData || [];
       if (!Array.isArray(users)) return [];
 
-      const { resolveMappingFormula } = wwLib?.wwFormula?.useFormula() || {};
+      const useFormula = wwLib?.wwFormula?.useFormula;
+      const { resolveMappingFormula } = useFormula ? useFormula() : {};
 
       return users.map(user => {
         if (!resolveMappingFormula) {
@@ -194,9 +217,9 @@ export default {
           };
         }
 
-        const lat = resolveMappingFormula(this.content?.usersLatFormula, user) ?? user.lat;
-        const lng = resolveMappingFormula(this.content?.usersLngFormula, user) ?? user.lng;
-        const zone = resolveMappingFormula(this.content?.usersZoneFormula, user) ?? user.hardinessZone;
+        const lat = resolveMappingFormula(props.content?.usersLatFormula, user) ?? user.lat;
+        const lng = resolveMappingFormula(props.content?.usersLngFormula, user) ?? user.lng;
+        const zone = resolveMappingFormula(props.content?.usersZoneFormula, user) ?? user.hardinessZone;
 
         return {
           lat: parseFloat(lat) || 0,
@@ -214,281 +237,11 @@ export default {
         user.lng >= -180 &&
         user.lng <= 180
       );
-    }
-  },
-
-  watch: {
-    'content.initialLat': function() { this.updateMapView(); },
-    'content.initialLng': function() { this.updateMapView(); },
-    'content.initialZoom': function() { this.updateMapView(); },
-    'content.mapType': function(newType) {
-      console.log('Map type watcher triggered:', newType);
-      this.$nextTick(() => {
-        this.updateMapType();
-      });
-    },
-    'content.enableClustering': function() { this.updateMarkers(); },
-    'content.clusterMaxZoom': function() { this.updateMarkers(); },
-    'content.enablePrivacyMode': function() {
-      this.$nextTick(() => {
-        this.updatePrivacyMode();
-      });
-    },
-    'content.showUserLocation': function() {
-      this.$nextTick(() => {
-        this.updatePrivacyMode();
-      });
-    },
-    'content.showHardinessHeatmap': function() {
-      this.$nextTick(() => {
-        this.updateHardinessHeatmap();
-      });
-    },
-    'content.userHardinessZone': function() {
-      this.$nextTick(() => {
-        this.updateHardinessHeatmap();
-      });
-    },
-    'content.hardinessHeatmapRadius': function() {
-      this.$nextTick(() => {
-        this.updateHardinessHeatmap();
-      });
-    },
-    processedUsersHardinessData: {
-      handler() {
-        this.$nextTick(() => {
-          this.updateHardinessHeatmap();
-        });
-      },
-      deep: true
-    },
-    'content.privacyRadius': function() {
-      this.$nextTick(() => {
-        this.updatePrivacyCircle();
-      });
-    },
-    'content.privacyRadiusMiles': function() {
-      this.$nextTick(() => {
-        this.updatePrivacyCircle();
-      });
-    },
-    'content.privacyUnit': function() {
-      this.$nextTick(() => {
-        this.updatePrivacyCircle();
-      });
-    },
-    'content.mapHeight': function() {
-      this.$nextTick(() => {
-        setTimeout(() => {
-          this.safeInvalidateSize();
-        }, 100);
-      });
-    },
-    processedMarkers: {
-      handler() { this.updateMarkers(); },
-      deep: true
-    },
-    'content.mapStyle': function() {
-      this.$nextTick(() => {
-        this.safeInvalidateSize();
-      });
-    },
-    'content.allowMapTypeSelection': function() {
-      // Force re-render of map type selector
-      this.$forceUpdate();
-    },
-    'content.allowClickToMark': function() {
-      // Update instructions visibility
-      this.$forceUpdate();
-    },
-    'content.requestGeolocation': function(newVal) {
-      if (newVal && !this.geolocationRequested) {
-        this.requestUserLocation();
-      }
-    },
-    'content.centerOnUserLocation': function() {
-      if (this.userExactLat && this.userExactLng && this.content?.centerOnUserLocation) {
-        this.map?.setView([this.userExactLat, this.userExactLng], this.content?.initialZoom || 15);
-      }
-    },
-    'content.isOnline': function() {
-      // Update marker colors based on online status
-      this.updateMarkers();
-      if (this.userLocationMarker) {
-        this.updateUserLocationMarker();
-      }
-    },
-  },
-
-  mounted() {
-    // Initialize internal variables for NoCode users
-    this.initializeInternalVariables();
-
-    this.$nextTick(() => {
-      this.initializeMap();
-      if (this.content?.requestGeolocation) {
-        this.requestUserLocation();
-      }
-
-      // Ensure map is properly sized after DOM settles
-      setTimeout(() => {
-        this.safeInvalidateSize();
-      }, 100);
     });
-  },
 
-  beforeUnmount() {
-    // Clean up heatmap
-    if (this.hardinessHeatmapLayer) {
-      this.map?.removeLayer(this.hardinessHeatmapLayer);
-      this.hardinessHeatmapLayer = null;
-    }
-
-    // Clean up resize observer
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect();
-      this.resizeObserver = null;
-    }
-
-    // Clean up resize timeout
-    if (this.resizeTimeout) {
-      clearTimeout(this.resizeTimeout);
-    }
-
-    // Clean up map
-    if (this.map) {
-      this.map.remove();
-    }
-  },
-
-  methods: {
-    initializeInternalVariables() {
-      // Initialize internal variables for NoCode users
-      try {
-        this.selectedLocationVariable = wwLib?.wwVariable?.useComponentVariable({
-          uid: this.uid,
-          name: 'selectedLocation',
-          type: 'object',
-          defaultValue: null,
-        });
-
-        this.userLocationVariable = wwLib?.wwVariable?.useComponentVariable({
-          uid: this.uid,
-          name: 'userLocation',
-          type: 'object',
-          defaultValue: null,
-        });
-
-        this.clickedLocationVariable = wwLib?.wwVariable?.useComponentVariable({
-          uid: this.uid,
-          name: 'clickedLocation',
-          type: 'object',
-          defaultValue: null,
-        });
-      } catch (error) {
-        console.warn('Failed to initialize internal variables:', error);
-      }
-    },
-
-    initializeMap() {
-      if (!this.$refs.mapContainer) {
-        console.warn('Map container not ready');
-        return;
-      }
-
-      const lat = this.content?.initialLat || 51.505;
-      const lng = this.content?.initialLng || -0.09;
-      const zoom = this.content?.initialZoom || 13;
-
-      try {
-        // Remove any existing map first
-        if (this.map) {
-          this.map.remove();
-          this.map = null;
-        }
-
-        // Simple map initialization - enable all interactions
-        this.map = L.map(this.$refs.mapContainer, {
-          dragging: true,
-          touchZoom: true,
-          doubleClickZoom: true,
-          scrollWheelZoom: true,
-          boxZoom: true,
-          keyboard: true,
-          zoomControl: true
-        }).setView([lat, lng], zoom);
-
-        this.setupTileLayers();
-        this.selectedMapType = this.content?.mapType || 'osm';
-        this.updateMapType();
-
-        // Add click handler for coordinate events
-        this.map.on('click', this.onMapClick);
-
-        // Set up resize observer for dynamic resizing
-        this.setupResizeObserver();
-
-        // Wait for map to be fully initialized before adding markers
-        this.map.whenReady(() => {
-          this.updateMarkers();
-          this.initializePrivacyMode();
-          this.updateHardinessHeatmap();
-
-          this.$emit('trigger-event', {
-            name: 'map-ready',
-            event: {}
-          });
-        });
-      } catch (error) {
-        console.error('Error initializing map:', error);
-      }
-    },
-
-
-
-    setupResizeObserver() {
-      const frontWindow = wwLib?.getFrontWindow ? wwLib.getFrontWindow() : window;
-      if (!this.$refs.mapContainer || !frontWindow.ResizeObserver) return;
-
-      this.resizeObserver = new frontWindow.ResizeObserver(() => {
-        // Debounce the resize to avoid too many calls
-        clearTimeout(this.resizeTimeout);
-        this.resizeTimeout = setTimeout(() => {
-          this.safeInvalidateSize();
-        }, 150);
-      });
-
-      this.resizeObserver.observe(this.$refs.mapContainer);
-    },
-
-    safeInvalidateSize() {
-      if (!this.map) return;
-
-      const container = this.map.getContainer();
-      if (!container) return;
-
-      // Check if container has dimensions
-      if (container.offsetWidth === 0 || container.offsetHeight === 0) {
-        console.warn('Map container has no dimensions, skipping invalidateSize');
-        return;
-      }
-
-      // Check if map panes are ready
-      const mapPane = container.querySelector('.leaflet-map-pane');
-      if (!mapPane) {
-        console.warn('Map panes not ready, skipping invalidateSize');
-        return;
-      }
-
-      try {
-        this.map.invalidateSize();
-      } catch (error) {
-        console.warn('Failed to invalidate map size:', error);
-      }
-    },
-
-    setupTileLayers() {
-      this.tileLayers = {
+    // Methods
+    const setupTileLayers = () => {
+      tileLayers.value = {
         osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© OpenStreetMap contributors'
         }),
@@ -505,65 +258,89 @@ export default {
           attribution: '© CartoDB, © OpenStreetMap contributors'
         })
       };
-    },
+    };
 
-    updateMapType() {
-      if (!this.map || !this.tileLayers) return;
+    const safeInvalidateSize = () => {
+      if (!map.value) return;
 
-      const newMapType = this.currentMapType;
+      const container = map.value.getContainer();
+      if (!container) return;
 
-      // Update selectedMapType
-      this.selectedMapType = newMapType;
+      if (container.offsetWidth === 0 || container.offsetHeight === 0) {
+        return;
+      }
 
-      // Remove all existing tile layers
-      Object.values(this.tileLayers).forEach(layer => {
-        if (this.map.hasLayer(layer)) {
-          this.map.removeLayer(layer);
+      const mapPane = container.querySelector('.leaflet-map-pane');
+      if (!mapPane) {
+        return;
+      }
+
+      try {
+        map.value.invalidateSize();
+      } catch (error) {
+        // Silent fail - map size invalidation not critical
+      }
+    };
+
+    const setupResizeObserver = () => {
+      const frontWindow = (wwLib?.getFrontWindow && wwLib.getFrontWindow()) || (typeof window !== 'undefined' ? window : null);
+      if (!mapContainer.value || !frontWindow || !frontWindow.ResizeObserver) return;
+
+      resizeObserver.value = new frontWindow.ResizeObserver(() => {
+        clearTimeout(resizeTimeout.value);
+        resizeTimeout.value = setTimeout(() => {
+          safeInvalidateSize();
+        }, 150);
+      });
+
+      resizeObserver.value.observe(mapContainer.value);
+    };
+
+    const updateMapType = () => {
+      if (!map.value || !tileLayers.value) return;
+
+      const newMapType = currentMapType.value;
+
+      Object.values(tileLayers.value).forEach(layer => {
+        if (map.value.hasLayer(layer)) {
+          map.value.removeLayer(layer);
         }
       });
 
-      // Add the selected layer
-      const selectedLayer = this.tileLayers[newMapType];
+      const selectedLayer = tileLayers.value[newMapType];
       if (selectedLayer) {
-        selectedLayer.addTo(this.map);
-        console.log(`Map type changed to: ${newMapType}`);
-      } else {
-        console.warn(`Unknown map type: ${newMapType}, available types:`, Object.keys(this.tileLayers));
+        selectedLayer.addTo(map.value);
       }
-    },
+    };
 
-    changeMapType() {
-      this.updateMapType();
-    },
+    const updateMapView = () => {
+      if (!map.value) return;
 
-    updateMapView() {
-      if (!this.map) return;
+      const lat = props.content?.initialLat || 51.505;
+      const lng = props.content?.initialLng || -0.09;
+      const zoom = props.content?.initialZoom || 13;
 
-      const lat = this.content?.initialLat || 51.505;
-      const lng = this.content?.initialLng || -0.09;
-      const zoom = this.content?.initialZoom || 13;
+      map.value.setView([lat, lng], zoom);
+    };
 
-      this.map.setView([lat, lng], zoom);
-    },
-
-    updateMarkers() {
-      if (!this.map || !this.map.getContainer()) return;
+    const updateMarkers = () => {
+      if (!map.value || !map.value.getContainer()) return;
 
       try {
-        if (this.markersLayer) {
-          this.map.removeLayer(this.markersLayer);
+        if (markersLayer.value) {
+          map.value.removeLayer(markersLayer.value);
         }
-        if (this.clusterGroup) {
-          this.map.removeLayer(this.clusterGroup);
+        if (clusterGroup.value) {
+          map.value.removeLayer(clusterGroup.value);
         }
 
-        const markers = this.processedMarkers;
+        const markers = processedMarkers.value;
         if (!markers.length) return;
 
-        if (this.content?.enableClustering) {
-          this.clusterGroup = L.markerClusterGroup({
+        if (props.content?.enableClustering) {
+          clusterGroup.value = L.markerClusterGroup({
             maxClusterRadius: 50,
-            disableClusteringAtZoom: this.content?.clusterMaxZoom || 15,
+            disableClusteringAtZoom: props.content?.clusterMaxZoom || 15,
             showCoverageOnHover: false,
             zoomToBoundsOnClick: true,
             spiderfyOnMaxZoom: true
@@ -572,9 +349,13 @@ export default {
           markers.forEach(markerData => {
             const marker = L.marker([markerData.lat, markerData.lng]);
 
-            // Remove default popup - use custom WeWeb popup instead
             marker.on('click', () => {
-              this.$emit('trigger-event', {
+              setSelectedLocation({
+                marker: markerData,
+                position: { lat: markerData.lat, lng: markerData.lng }
+              });
+
+              emit('trigger-event', {
                 name: 'marker-click',
                 event: {
                   marker: markerData,
@@ -583,19 +364,23 @@ export default {
               });
             });
 
-            this.clusterGroup.addLayer(marker);
+            clusterGroup.value.addLayer(marker);
           });
 
-          this.map.addLayer(this.clusterGroup);
+          map.value.addLayer(clusterGroup.value);
         } else {
-          this.markersLayer = L.layerGroup();
+          markersLayer.value = L.layerGroup();
 
           markers.forEach(markerData => {
             const marker = L.marker([markerData.lat, markerData.lng]);
 
-            // Remove default popup - use custom WeWeb popup instead
             marker.on('click', () => {
-              this.$emit('trigger-event', {
+              setSelectedLocation({
+                marker: markerData,
+                position: { lat: markerData.lat, lng: markerData.lng }
+              });
+
+              emit('trigger-event', {
                 name: 'marker-click',
                 event: {
                   marker: markerData,
@@ -604,22 +389,21 @@ export default {
               });
             });
 
-            this.markersLayer.addLayer(marker);
+            markersLayer.value.addLayer(marker);
           });
 
-          this.map.addLayer(this.markersLayer);
+          map.value.addLayer(markersLayer.value);
         }
       } catch (error) {
-        console.error('Error updating markers:', error);
+        // Silent fail - marker update errors handled gracefully
       }
-    },
+    };
 
-    updateUserLocationMarker() {
-      if (!this.userLocationMarker || !this.userExactLat || !this.userExactLng) return;
+    const updateUserLocationMarker = () => {
+      if (!userLocationMarker.value || !userExactLat.value || !userExactLng.value) return;
 
       try {
-        // Update marker color based on online status
-        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
         const newIcon = L.divIcon({
           className: 'user-location-marker',
           html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
@@ -627,56 +411,128 @@ export default {
           iconAnchor: [10, 10]
         });
 
-        this.userLocationMarker.setIcon(newIcon);
+        userLocationMarker.value.setIcon(newIcon);
       } catch (error) {
-        console.error('Error updating user location marker:', error);
+        // Silent fail - marker icon update not critical
       }
-    },
+    };
 
-    requestUserLocation() {
-      const frontWindow = wwLib?.getFrontWindow() || window;
-      if (!frontWindow.navigator?.geolocation) return;
+    const getPrivacyRadiusInKm = () => {
+      const unit = props.content?.privacyUnit || 'km';
+      let radius;
 
-      this.geolocationRequested = true;
+      if (unit === 'miles') {
+        radius = props.content?.privacyRadiusMiles || 0.62;
+        return radius * 1.60934;
+      } else {
+        radius = props.content?.privacyRadius || 1;
+        return radius;
+      }
+    };
 
-      frontWindow.navigator.geolocation.getCurrentPosition(
-        this.onLocationSuccess,
-        this.onLocationError,
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-      );
-    },
+    const generateRandomOffset = (radiusKm) => {
+      const radiusInDegrees = radiusKm / 111.32;
+      const angle = Math.random() * 2 * Math.PI;
+      const distance = Math.random() * radiusInDegrees;
 
-    onLocationSuccess(position) {
-      if (!this.map) {
-        console.warn('Map not ready for location update');
+      return {
+        lat: distance * Math.cos(angle),
+        lng: distance * Math.sin(angle)
+      };
+    };
+
+    const updatePrivacyCircle = () => {
+      if (privacyCircle.value) {
+        map.value.removeLayer(privacyCircle.value);
+        privacyCircle.value = null;
+      }
+
+      if (props.content?.enablePrivacyMode && props.content?.showUserLocation && map.value) {
+        let centerLat, centerLng;
+
+        if (userExactLat.value && userExactLng.value) {
+          const radius = getPrivacyRadiusInKm();
+          const offset = generateRandomOffset(radius);
+          centerLat = userExactLat.value + offset.lat;
+          centerLng = userExactLng.value + offset.lng;
+        } else if (userMarkedLocationMarker.value) {
+          const markedPos = userMarkedLocationMarker.value.getLatLng();
+          const radius = getPrivacyRadiusInKm();
+          const offset = generateRandomOffset(radius);
+          centerLat = markedPos.lat + offset.lat;
+          centerLng = markedPos.lng + offset.lng;
+        } else {
+          return;
+        }
+
+        const radiusInMeters = getPrivacyRadiusInKm() * 1000;
+        const circleColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+
+        privacyCircle.value = L.circle([centerLat, centerLng], {
+          radius: radiusInMeters,
+          color: circleColor,
+          fillColor: circleColor,
+          fillOpacity: 0.2,
+          weight: 2,
+          dashArray: '5, 5'
+        }).addTo(map.value);
+      }
+    };
+
+    const updatePrivacyMode = () => {
+      if (!map.value) return;
+
+      if (userLocationMarker.value) {
+        if (props.content?.enablePrivacyMode || !props.content?.showUserLocation) {
+          if (map.value.hasLayer(userLocationMarker.value)) {
+            map.value.removeLayer(userLocationMarker.value);
+          }
+        } else {
+          if (!map.value.hasLayer(userLocationMarker.value)) {
+            userLocationMarker.value.addTo(map.value);
+          }
+        }
+      }
+
+      updatePrivacyCircle();
+
+      if (userMarkedLocationMarker.value) {
+        if (props.content?.enablePrivacyMode) {
+          if (map.value.hasLayer(userMarkedLocationMarker.value)) {
+            map.value.removeLayer(userMarkedLocationMarker.value);
+          }
+        } else {
+          if (!map.value.hasLayer(userMarkedLocationMarker.value)) {
+            userMarkedLocationMarker.value.addTo(map.value);
+          }
+        }
+      }
+    };
+
+    const onLocationSuccess = (position) => {
+      if (!map.value) {
         return;
       }
 
       const { latitude, longitude } = position.coords;
-      this.showUserLocation = true;
+      showUserLocation.value = true;
 
-      // Store the EXACT coordinates for internal use
-      this.userExactLat = latitude;
-      this.userExactLng = longitude;
+      userExactLat.value = latitude;
+      userExactLng.value = longitude;
 
-      // Update internal variable for NoCode users
-      if (this.userLocationVariable?.setValue) {
-        this.userLocationVariable.setValue({
-          lat: latitude,
-          lng: longitude,
-          timestamp: new Date().toISOString()
-        });
-      }
+      setUserLocation({
+        lat: latitude,
+        lng: longitude,
+        timestamp: new Date().toISOString()
+      });
 
       try {
-        // Remove existing marker if any
-        if (this.userLocationMarker) {
-          this.map.removeLayer(this.userLocationMarker);
+        if (userLocationMarker.value) {
+          map.value.removeLayer(userLocationMarker.value);
         }
 
-        // Create marker at EXACT location (will be shown/hidden based on privacy mode)
-        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
-        this.userLocationMarker = L.marker([latitude, longitude], {
+        const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        userLocationMarker.value = L.marker([latitude, longitude], {
           icon: L.divIcon({
             className: 'user-location-marker',
             html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
@@ -685,12 +541,10 @@ export default {
           })
         });
 
-        // Show exact marker ONLY when privacy mode is OFF
-        if (!this.content?.enablePrivacyMode) {
-          this.userLocationMarker.addTo(this.map);
-          // Remove default popup - use custom WeWeb popup instead
-          this.userLocationMarker.on('click', () => {
-            this.$emit('trigger-event', {
+        if (!props.content?.enablePrivacyMode) {
+          userLocationMarker.value.addTo(map.value);
+          userLocationMarker.value.on('click', () => {
+            emit('trigger-event', {
               name: 'user-location-click',
               event: {
                 position: { lat: latitude, lng: longitude },
@@ -700,67 +554,79 @@ export default {
           });
         }
 
-        // Center map on user location if requested
-        if (this.content?.centerOnUserLocation) {
-          this.map.setView([latitude, longitude], this.content?.initialZoom || 15);
+        if (props.content?.centerOnUserLocation) {
+          map.value.setView([latitude, longitude], props.content?.initialZoom || 15);
         }
 
-        // Update privacy circle (will show/hide based on privacy mode)
-        this.updatePrivacyMode();
+        updatePrivacyMode();
 
-        this.$emit('trigger-event', {
+        emit('trigger-event', {
           name: 'location-granted',
           event: {
             position: { lat: latitude, lng: longitude }
           }
         });
-      } catch (error) {
-        console.error('Error adding user location marker:', error);
-      }
-    },
 
-    onLocationError() {
-      this.geolocationDenied = true;
-      this.$emit('trigger-event', {
+        if (props.content?.enableReverseGeocoding) {
+          debouncedReverseGeocode(latitude, longitude, 'user-location-geocoded');
+        }
+      } catch (error) {
+        // Silent fail - user location marker not critical
+      }
+    };
+
+    const onLocationError = () => {
+      geolocationDenied.value = true;
+      emit('trigger-event', {
         name: 'location-denied',
         event: {}
       });
-    },
+    };
 
-    onMapClick(e) {
-      if (!this.map) return;
+    const requestUserLocation = () => {
+      const frontWindow = (wwLib?.getFrontWindow && wwLib.getFrontWindow()) || (typeof window !== 'undefined' ? window : null);
+      if (!frontWindow || !frontWindow.navigator?.geolocation) return;
+
+      geolocationRequested.value = true;
+
+      frontWindow.navigator.geolocation.getCurrentPosition(
+        onLocationSuccess,
+        onLocationError,
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    };
+
+    const onMapClick = (e) => {
+      if (!map.value) return;
 
       const { lat, lng } = e.latlng;
 
-      // Always emit map click event for debugging/console purposes
-      this.$emit('trigger-event', {
+      emit('trigger-event', {
         name: 'map-click',
         event: {
           position: { lat, lng }
         }
       });
 
-      // Update internal variable for NoCode users
-      if (this.clickedLocationVariable?.setValue) {
-        this.clickedLocationVariable.setValue({
-          lat,
-          lng,
-          timestamp: new Date().toISOString()
-        });
+      setClickedLocation({
+        lat,
+        lng,
+        timestamp: new Date().toISOString()
+      });
+
+      if (props.content?.enableReverseGeocoding) {
+        debouncedReverseGeocode(lat, lng, 'location-geocoded');
       }
 
-      // Only proceed with location marking if enabled
-      if (!this.content?.allowClickToMark) return;
+      if (!props.content?.allowClickToMark) return;
 
       try {
-        // Remove existing marked location marker
-        if (this.userMarkedLocationMarker) {
-          this.map.removeLayer(this.userMarkedLocationMarker);
+        if (userMarkedLocationMarker.value) {
+          map.value.removeLayer(userMarkedLocationMarker.value);
         }
 
-        // Create new marked location marker
-        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
-        this.userMarkedLocationMarker = L.marker([lat, lng], {
+        const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        userMarkedLocationMarker.value = L.marker([lat, lng], {
           icon: L.divIcon({
             className: 'user-marked-location',
             html: `<div class="user-marked-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
@@ -769,13 +635,11 @@ export default {
           })
         });
 
-        // Show marker only if privacy mode is OFF
-        if (!this.content?.enablePrivacyMode) {
-          this.userMarkedLocationMarker.addTo(this.map);
-          // Remove default popup - use custom WeWeb popup instead
-          this.userMarkedLocationMarker.on('click', () => {
-            const pos = this.userMarkedLocationMarker.getLatLng();
-            this.$emit('trigger-event', {
+        if (!props.content?.enablePrivacyMode) {
+          userMarkedLocationMarker.value.addTo(map.value);
+          userMarkedLocationMarker.value.on('click', () => {
+            const pos = userMarkedLocationMarker.value.getLatLng();
+            emit('trigger-event', {
               name: 'marked-location-click',
               event: {
                 position: { lat: pos.lat, lng: pos.lng },
@@ -785,168 +649,706 @@ export default {
           });
         }
 
-        // Update privacy circle to reflect new location
-        this.updatePrivacyCircle();
+        updatePrivacyCircle();
 
-        this.$emit('trigger-event', {
+        emit('trigger-event', {
           name: 'location-marked',
           event: {
             position: { lat, lng }
           }
         });
+
+        if (props.content?.enableReverseGeocoding) {
+          debouncedReverseGeocode(lat, lng, 'marked-location-geocoded');
+        }
       } catch (error) {
-        console.error('Error adding marked location marker:', error);
+        // Silent fail - marked location marker not critical
       }
-    },
+    };
 
-    initializePrivacyMode() {
-      this.privacyRadiusValue = this.content?.privacyRadius || 1;
-      this.privacyUnit = this.content?.privacyUnit || 'km';
-    },
-
-    updatePrivacyMode() {
-      if (!this.map) return;
-
-      // Handle user location marker visibility
-      if (this.userLocationMarker) {
-        if (this.content?.enablePrivacyMode || !this.content?.showUserLocation) {
-          // Privacy ON OR showUserLocation OFF: Hide exact marker
-          if (this.map.hasLayer(this.userLocationMarker)) {
-            this.map.removeLayer(this.userLocationMarker);
-          }
-        } else {
-          // Privacy OFF AND showUserLocation ON: Show exact marker
-          if (!this.map.hasLayer(this.userLocationMarker)) {
-            this.userLocationMarker.addTo(this.map);
-          }
-        }
+    const updateHardinessHeatmap = () => {
+      if (hardinessHeatmapLayer.value) {
+        map.value.removeLayer(hardinessHeatmapLayer.value);
+        hardinessHeatmapLayer.value = null;
       }
 
-      // Handle privacy circle
-      this.updatePrivacyCircle();
-
-      // Handle marked location marker (click-to-mark)
-      if (this.userMarkedLocationMarker) {
-        if (this.content?.enablePrivacyMode) {
-          // Privacy ON: Hide exact marked location
-          if (this.map.hasLayer(this.userMarkedLocationMarker)) {
-            this.map.removeLayer(this.userMarkedLocationMarker);
-          }
-        } else {
-          // Privacy OFF: Show exact marked location
-          if (!this.map.hasLayer(this.userMarkedLocationMarker)) {
-            this.userMarkedLocationMarker.addTo(this.map);
-          }
-        }
-      }
-    },
-
-    updatePrivacyCircle() {
-      // Remove existing circle
-      if (this.privacyCircle) {
-        this.map.removeLayer(this.privacyCircle);
-        this.privacyCircle = null;
+      if (!props.content?.showHardinessHeatmap || !map.value) {
+        return;
       }
 
-      // Only show circle in privacy mode AND when we have a location AND showUserLocation is enabled
-      if (this.content?.enablePrivacyMode && this.content?.showUserLocation && this.map) {
-        let centerLat, centerLng;
+      const users = processedUsersHardinessData.value;
+      if (!users.length) {
+        return;
+      }
 
-        if (this.userExactLat && this.userExactLng) {
-          // Use geolocation coordinates with random offset
-          const radius = this.getPrivacyRadiusInKm();
-          const offset = this.generateRandomOffset(radius);
-          centerLat = this.userExactLat + offset.lat;
-          centerLng = this.userExactLng + offset.lng;
-        } else if (this.userMarkedLocationMarker) {
-          // Use marked location coordinates with random offset
-          const markedPos = this.userMarkedLocationMarker.getLatLng();
-          const radius = this.getPrivacyRadiusInKm();
-          const offset = this.generateRandomOffset(radius);
-          centerLat = markedPos.lat + offset.lat;
-          centerLng = markedPos.lng + offset.lng;
-        } else {
-          return; // No location to show privacy circle for
+      createMultiUserHeatmap(users);
+    };
+
+    // Reverse Geocoding
+    const reverseGeocode = async (lat, lng) => {
+      if (!props.content?.enableReverseGeocoding) return null;
+
+      try {
+        const rateLimit = props.content?.geocodingRateLimit || 1000;
+
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+          {
+            headers: {
+              'User-Agent': 'WeWebOpenStreetMapComponent/1.0'
+            }
+          }
+        );
+
+        if (!response.ok) {
+          console.warn('Geocoding request failed:', response.status);
+          return null;
         }
 
-        const radiusInMeters = this.getPrivacyRadiusInKm() * 1000;
-        const circleColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        const data = await response.json();
 
-        this.privacyCircle = L.circle([centerLat, centerLng], {
-          radius: radiusInMeters,
-          color: circleColor,
-          fillColor: circleColor,
-          fillOpacity: 0.2,
-          weight: 2,
-          dashArray: '5, 5'
-        }).addTo(this.map);
+        const geocoded = {
+          displayName: data.display_name || '',
+          address: {
+            road: data.address?.road || '',
+            houseNumber: data.address?.house_number || '',
+            city: data.address?.city || data.address?.town || data.address?.village || '',
+            state: data.address?.state || '',
+            country: data.address?.country || '',
+            countryCode: data.address?.country_code || '',
+            postcode: data.address?.postcode || ''
+          },
+          raw: data
+        };
+
+        setGeocodedAddress(geocoded);
+
+        return geocoded;
+      } catch (error) {
+        console.error('Reverse geocoding error:', error);
+        return null;
       }
-    },
+    };
 
-    togglePrivacyMode() {
-      console.log('Privacy mode toggle clicked');
+    const debouncedReverseGeocode = (lat, lng, eventName) => {
+      clearTimeout(geocodingDebounceTimer.value);
 
-      // Simple alert to test if the click is working
-      alert('Privacy toggle clicked! Current mode: ' + (this.content?.enablePrivacyMode ? 'Private' : 'Exact'));
+      const rateLimit = props.content?.geocodingRateLimit || 1000;
 
-      // Emit trigger event
-      this.$emit('trigger-event', {
-        name: 'privacy-mode-toggled',
+      geocodingDebounceTimer.value = setTimeout(async () => {
+        const geocoded = await reverseGeocode(lat, lng);
+
+        if (geocoded) {
+          emit('trigger-event', {
+            name: eventName,
+            event: {
+              geocoded,
+              coordinates: { lat, lng }
+            }
+          });
+        }
+      }, rateLimit);
+    };
+
+    // Country/State Boundary Rendering
+    const loadCountryBoundaries = async () => {
+      if (!props.content?.enableCountryHover || !map.value) {
+        console.log('❌ Country boundaries loading skipped:', {
+          enableCountryHover: props.content?.enableCountryHover,
+          mapExists: !!map.value
+        });
+        return;
+      }
+
+      try {
+        console.log('🌍 Loading country boundaries...');
+
+        const bounds = map.value.getBounds();
+        const zoom = map.value.getZoom();
+
+        // Check zoom level constraints
+        const minZoom = props.content?.countryMinZoom ?? 1;
+        const maxZoom = props.content?.countryMaxZoom ?? 18;
+
+        if (zoom < minZoom || zoom > maxZoom) {
+          console.log('❌ Country boundaries skipped - zoom out of range:', {
+            currentZoom: zoom,
+            minZoom,
+            maxZoom
+          });
+          // Remove existing layer if present
+          if (countryBoundaryLayer.value) {
+            map.value.removeLayer(countryBoundaryLayer.value);
+            countryBoundaryLayer.value = null;
+          }
+          return;
+        }
+
+        console.log('📍 Map bounds:', {
+          west: bounds.getWest(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          north: bounds.getNorth(),
+          zoom: zoom
+        });
+
+        let boundaries;
+
+        if (props.content?.useVectorTiles) {
+          console.log('Using vector tiles for countries');
+          await vectorTileClient.init();
+          boundaries = await loadCountriesVectorTiles(bounds, zoom);
+        } else {
+          const cacheKey = boundaryCache.generateKey('countries', bounds, zoom);
+          const cached = boundaryCache.get(cacheKey);
+
+          if (cached) {
+            console.log('Using cached country boundaries');
+            boundaries = cached;
+          } else {
+            console.log('Fetching country boundaries from Supabase');
+            boundaries = await boundaryAPI.getCountriesInBounds(bounds, zoom);
+            boundaryCache.set(cacheKey, boundaries);
+          }
+        }
+
+        if (!boundaries || boundaries.length === 0) {
+          console.warn('⚠️ No country boundaries loaded');
+          return;
+        }
+
+        console.log('✅ Boundaries loaded, count:', boundaries.length);
+        console.log('📦 Sample boundary:', boundaries[0]);
+        renderCountryBoundaries(boundaries);
+
+        emit('trigger-event', {
+          name: 'countries-loaded',
+          event: { countriesCount: boundaries.length }
+        });
+
+      } catch (error) {
+        console.error('Error loading country boundaries:', error);
+      }
+    };
+
+    const loadStateBoundaries = async () => {
+      if (!props.content?.enableStateHover || !map.value) return;
+
+      try {
+        console.log('Loading state boundaries...');
+
+        const bounds = map.value.getBounds();
+        const zoom = map.value.getZoom();
+
+        // Check zoom level constraints
+        const minZoom = props.content?.stateMinZoom ?? 4;
+        const maxZoom = props.content?.stateMaxZoom ?? 18;
+
+        if (zoom < minZoom || zoom > maxZoom) {
+          console.log('State boundaries skipped - zoom out of range:', {
+            currentZoom: zoom,
+            minZoom,
+            maxZoom
+          });
+          // Remove existing layer if present
+          if (stateBoundaryLayer.value) {
+            map.value.removeLayer(stateBoundaryLayer.value);
+            stateBoundaryLayer.value = null;
+          }
+          return;
+        }
+
+        let boundaries;
+
+        if (props.content?.useVectorTiles) {
+          console.log('Using vector tiles for states');
+          await vectorTileClient.init();
+          boundaries = await loadStatesVectorTiles(bounds, zoom);
+        } else {
+          const cacheKey = boundaryCache.generateKey('states', bounds, zoom);
+          const cached = boundaryCache.get(cacheKey);
+
+          if (cached) {
+            console.log('Using cached state boundaries');
+            boundaries = cached;
+          } else {
+            console.log('Fetching state boundaries from Supabase');
+            boundaries = await boundaryAPI.getStatesInBounds(bounds, zoom);
+            boundaryCache.set(cacheKey, boundaries);
+          }
+        }
+
+        if (!boundaries || boundaries.length === 0) {
+          console.warn('No state boundaries loaded');
+          return;
+        }
+
+        renderStateBoundaries(boundaries);
+
+        emit('trigger-event', {
+          name: 'states-loaded',
+          event: { statesCount: boundaries.length }
+        });
+
+      } catch (error) {
+        console.error('Error loading state boundaries:', error);
+      }
+    };
+
+    const loadCountriesVectorTiles = async (bounds, zoom) => {
+      // Use simplified boundaries function instead of MVT tiles
+      // This returns GeoJSON data that can be rendered directly
+      const startTime = performance.now();
+
+      try {
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .schema('gis')
+          .rpc('get_simplified_boundaries_in_bbox', {
+            boundary_type: 'countries',
+            zoom_level: zoom,
+            bbox_west: bounds.getWest(),
+            bbox_south: bounds.getSouth(),
+            bbox_east: bounds.getEast(),
+            bbox_north: bounds.getNorth(),
+            country_filter: null
+          });
+
+        const fetchTime = performance.now() - startTime;
+
+        if (error) {
+          console.error('❌ Error loading countries with vector tiles:', error);
+          return [];
+        }
+
+        if (!data || data.length === 0) {
+          console.log('⚠️ No countries found in bounds');
+          return [];
+        }
+
+        // Calculate data size
+        const dataSize = new Blob([JSON.stringify(data)]).size;
+        const dataSizeKB = (dataSize / 1024).toFixed(2);
+        const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
+
+        // Performance metrics
+        console.group('📊 Countries Load Performance');
+        console.log('✅ Features loaded:', data.length);
+        console.log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
+        console.log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
+        console.log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
+        console.log('🎯 Zoom level:', zoom);
+        console.groupEnd();
+
+        // Transform to expected format
+        return data.map(country => ({
+          id: country.id,
+          name: country.name,
+          iso_a2: country.properties?.iso_a2 || null,
+          iso_a3: country.properties?.iso_a3 || null,
+          geometry_geojson: country.geometry_geojson,
+          properties: country.properties
+        }));
+      } catch (err) {
+        console.error('❌ Error in loadCountriesVectorTiles:', err);
+        return [];
+      }
+    };
+
+    const loadStatesVectorTiles = async (bounds, zoom) => {
+      // Use simplified boundaries function instead of MVT tiles
+      // This returns GeoJSON data that can be rendered directly
+      const startTime = performance.now();
+
+      try {
+        const supabase = getSupabaseClient();
+
+        const { data, error } = await supabase
+          .schema('gis')
+          .rpc('get_simplified_boundaries_in_bbox', {
+            boundary_type: 'states',
+            zoom_level: zoom,
+            bbox_west: bounds.getWest(),
+            bbox_south: bounds.getSouth(),
+            bbox_east: bounds.getEast(),
+            bbox_north: bounds.getNorth(),
+            country_filter: null
+          });
+
+        const fetchTime = performance.now() - startTime;
+
+        if (error) {
+          console.error('❌ Error loading states with vector tiles:', error);
+          return [];
+        }
+
+        if (!data || data.length === 0) {
+          console.log('⚠️ No states found in bounds');
+          return [];
+        }
+
+        // Calculate data size
+        const dataSize = new Blob([JSON.stringify(data)]).size;
+        const dataSizeKB = (dataSize / 1024).toFixed(2);
+        const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
+
+        // Performance metrics
+        console.group('📊 States Load Performance');
+        console.log('✅ Features loaded:', data.length);
+        console.log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
+        console.log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
+        console.log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
+        console.log('🎯 Zoom level:', zoom);
+        console.groupEnd();
+
+        // Transform to expected format
+        return data.map(state => ({
+          id: state.id,
+          name: state.name,
+          name_en: state.properties?.name_en || state.name,
+          iso_a2: state.properties?.iso_a2 || null,
+          adm1_code: state.properties?.adm1_code || null,
+          admin: state.properties?.admin || null,
+          geometry_geojson: state.geometry_geojson,
+          properties: state.properties
+        }));
+      } catch (err) {
+        console.error('❌ Error in loadStatesVectorTiles:', err);
+        return [];
+      }
+    };
+
+    const handleCountryHover = (e, feature) => {
+      const layer = e.target;
+
+      hoveredCountry.value = feature.properties;
+
+      layer.setStyle({
+        fillColor: props.content?.countryHoverColor || '#ff0000',
+        fillOpacity: props.content?.countryHoverOpacity || 0.3
+      });
+
+      emit('trigger-event', {
+        name: 'country-hover',
         event: {
-          enabled: !this.content?.enablePrivacyMode,
-          previousMode: this.content?.enablePrivacyMode ? 'private' : 'exact'
+          country: feature.properties,
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
         }
       });
-    },
+    };
 
-    getPrivacyRadiusInKm() {
-      const unit = this.content?.privacyUnit || 'km';
-      let radius;
+    const handleCountryHoverOut = (e, feature) => {
+      const layer = e.target;
 
-      if (unit === 'miles') {
-        radius = this.content?.privacyRadiusMiles || 0.62;
-        return radius * 1.60934; // Convert miles to km
+      if (selectedCountry.value?.id !== feature.properties.id) {
+        layer.setStyle({
+          fillColor: 'transparent',
+          fillOpacity: 0
+        });
+      }
+
+      hoveredCountry.value = null;
+
+      emit('trigger-event', {
+        name: 'country-hover-out',
+        event: { country: feature.properties }
+      });
+    };
+
+    const handleCountryClick = (e, feature) => {
+      const isCurrentlySelected = selectedCountry.value?.id === feature.properties.id;
+
+      if (isCurrentlySelected) {
+        selectedCountry.value = null;
+        setSelectedCountryData(null);
+
+        e.target.setStyle({
+          fillColor: 'transparent',
+          fillOpacity: 0
+        });
+
+        emit('trigger-event', {
+          name: 'country-deselected',
+          event: { country: feature.properties }
+        });
       } else {
-        radius = this.content?.privacyRadius || 1;
-        return radius;
-      }
-    },
+        if (countryBoundaryLayer.value) {
+          countryBoundaryLayer.value.eachLayer(layer => {
+            layer.setStyle({
+              fillColor: 'transparent',
+              fillOpacity: 0
+            });
+          });
+        }
 
-    generateRandomOffset(radiusKm) {
-      const radiusInDegrees = radiusKm / 111.32;
-      const angle = Math.random() * 2 * Math.PI;
-      const distance = Math.random() * radiusInDegrees;
+        selectedCountry.value = feature.properties;
+        setSelectedCountryData(feature.properties);
 
-      return {
-        lat: distance * Math.cos(angle),
-        lng: distance * Math.sin(angle)
-      };
-    },
+        e.target.setStyle({
+          fillColor: props.content?.countrySelectedColor || '#0000ff',
+          fillOpacity: props.content?.countrySelectedOpacity || 0.5
+        });
 
-    updateHardinessHeatmap() {
-      // Remove existing heatmap layers
-      if (this.hardinessHeatmapLayer) {
-        this.map.removeLayer(this.hardinessHeatmapLayer);
-        this.hardinessHeatmapLayer = null;
-      }
-
-      // Only show heatmap if enabled and we have users data
-      if (!this.content?.showHardinessHeatmap || !this.map) {
-        return;
+        emit('trigger-event', {
+          name: 'country-selected',
+          event: { country: feature.properties }
+        });
       }
 
-      const users = this.processedUsersHardinessData;
-      if (!users.length) {
-        // No users data - don't show anything
-        return;
+      emit('trigger-event', {
+        name: 'country-click',
+        event: {
+          country: feature.properties,
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng },
+          action: isCurrentlySelected ? 'deselected' : 'selected'
+        }
+      });
+    };
+
+    const handleStateHover = (e, feature) => {
+      const layer = e.target;
+
+      hoveredState.value = feature.properties;
+
+      layer.setStyle({
+        fillColor: props.content?.stateHoverColor || '#ff0000',
+        fillOpacity: props.content?.stateHoverOpacity || 0.3
+      });
+
+      emit('trigger-event', {
+        name: 'state-hover',
+        event: {
+          state: feature.properties,
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
+        }
+      });
+    };
+
+    const handleStateHoverOut = (e, feature) => {
+      const layer = e.target;
+
+      if (selectedState.value?.id !== feature.properties.id) {
+        layer.setStyle({
+          fillColor: 'transparent',
+          fillOpacity: 0
+        });
       }
 
-      // Create multi-user heatmap
-      this.createMultiUserHeatmap(users);
-    },
+      hoveredState.value = null;
 
-    createMultiUserHeatmap(users) {
-      // Convert hardiness zones to numeric values for intensity
+      emit('trigger-event', {
+        name: 'state-hover-out',
+        event: { state: feature.properties }
+      });
+    };
+
+    const handleStateClick = (e, feature) => {
+      const isCurrentlySelected = selectedState.value?.id === feature.properties.id;
+
+      if (isCurrentlySelected) {
+        selectedState.value = null;
+        setSelectedStateData(null);
+
+        e.target.setStyle({
+          fillColor: 'transparent',
+          fillOpacity: 0
+        });
+
+        emit('trigger-event', {
+          name: 'state-deselected',
+          event: { state: feature.properties }
+        });
+      } else {
+        if (stateBoundaryLayer.value) {
+          stateBoundaryLayer.value.eachLayer(layer => {
+            layer.setStyle({
+              fillColor: 'transparent',
+              fillOpacity: 0
+            });
+          });
+        }
+
+        selectedState.value = feature.properties;
+        setSelectedStateData(feature.properties);
+
+        e.target.setStyle({
+          fillColor: props.content?.stateSelectedColor || '#0000ff',
+          fillOpacity: props.content?.stateSelectedOpacity || 0.5
+        });
+
+        emit('trigger-event', {
+          name: 'state-selected',
+          event: { state: feature.properties }
+        });
+      }
+
+      emit('trigger-event', {
+        name: 'state-click',
+        event: {
+          state: feature.properties,
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng },
+          action: isCurrentlySelected ? 'deselected' : 'selected'
+        }
+      });
+    };
+
+    const renderCountryBoundaries = (boundaries) => {
+      console.log('🎨 Rendering country boundaries:', boundaries.length);
+
+      if (countryBoundaryLayer.value) {
+        map.value.removeLayer(countryBoundaryLayer.value);
+      }
+
+      const geoJsonData = boundaryAPI.toGeoJSON(boundaries);
+      console.log('📄 GeoJSON features:', geoJsonData.features.length);
+
+      countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
+        style: (feature) => {
+          // Check if this feature is selected
+          const isSelected = selectedCountry.value?.id === feature?.properties?.id;
+
+          if (isSelected) {
+            return {
+              fillColor: props.content?.countrySelectedColor || '#0000ff',
+              fillOpacity: props.content?.countrySelectedOpacity || 0.5,
+              color: props.content?.countryBorderColor || '#666666',
+              weight: props.content?.countryBorderWidth || 1,
+              opacity: props.content?.countryBorderOpacity || 0.5
+            };
+          }
+
+          return {
+            fillColor: 'transparent',
+            fillOpacity: 0,
+            color: props.content?.countryBorderColor || '#666666',
+            weight: props.content?.countryBorderWidth || 1,
+            opacity: props.content?.countryBorderOpacity || 0.5
+          };
+        },
+        onEachFeature: (feature, layer) => {
+          layer.on({
+            mouseover: (e) => handleCountryHover(e, feature),
+            mouseout: (e) => handleCountryHoverOut(e, feature),
+            click: (e) => handleCountryClick(e, feature)
+          });
+        }
+      }).addTo(map.value);
+    };
+
+    const renderStateBoundaries = (boundaries) => {
+      if (stateBoundaryLayer.value) {
+        map.value.removeLayer(stateBoundaryLayer.value);
+      }
+
+      const geoJsonData = boundaryAPI.toGeoJSON(boundaries);
+
+      stateBoundaryLayer.value = L.geoJSON(geoJsonData, {
+        style: (feature) => {
+          // Check if this feature is selected
+          const isSelected = selectedState.value?.id === feature?.properties?.id;
+
+          if (isSelected) {
+            return {
+              fillColor: props.content?.stateSelectedColor || '#0000ff',
+              fillOpacity: props.content?.stateSelectedOpacity || 0.5,
+              color: props.content?.stateBorderColor || '#666666',
+              weight: props.content?.stateBorderWidth || 1,
+              opacity: props.content?.stateBorderOpacity || 0.5
+            };
+          }
+
+          return {
+            fillColor: 'transparent',
+            fillOpacity: 0,
+            color: props.content?.stateBorderColor || '#666666',
+            weight: props.content?.stateBorderWidth || 1,
+            opacity: props.content?.stateBorderOpacity || 0.5
+          };
+        },
+        onEachFeature: (feature, layer) => {
+          layer.on({
+            mouseover: (e) => handleStateHover(e, feature),
+            mouseout: (e) => handleStateHoverOut(e, feature),
+            click: (e) => handleStateClick(e, feature)
+          });
+        }
+      }).addTo(map.value);
+    };
+
+    const updateBoundaries = async () => {
+      if (!map.value) return;
+
+      if (props.content?.enableCountryHover) {
+        await loadCountryBoundaries();
+      } else if (countryBoundaryLayer.value) {
+        map.value.removeLayer(countryBoundaryLayer.value);
+        countryBoundaryLayer.value = null;
+      }
+
+      if (props.content?.enableStateHover) {
+        await loadStateBoundaries();
+      } else if (stateBoundaryLayer.value) {
+        map.value.removeLayer(stateBoundaryLayer.value);
+        stateBoundaryLayer.value = null;
+      }
+    };
+
+    const updateCountryBoundaryStyles = () => {
+      if (!countryBoundaryLayer.value) return;
+
+      countryBoundaryLayer.value.eachLayer(layer => {
+        const feature = layer.feature;
+        const isSelected = selectedCountry.value?.id === feature?.properties?.id;
+
+        if (isSelected) {
+          layer.setStyle({
+            fillColor: props.content?.countrySelectedColor || '#0000ff',
+            fillOpacity: props.content?.countrySelectedOpacity || 0.5,
+            color: props.content?.countryBorderColor || '#666666',
+            weight: props.content?.countryBorderWidth || 1,
+            opacity: props.content?.countryBorderOpacity || 0.5
+          });
+        } else {
+          layer.setStyle({
+            fillColor: 'transparent',
+            fillOpacity: 0,
+            color: props.content?.countryBorderColor || '#666666',
+            weight: props.content?.countryBorderWidth || 1,
+            opacity: props.content?.countryBorderOpacity || 0.5
+          });
+        }
+      });
+    };
+
+    const updateStateBoundaryStyles = () => {
+      if (!stateBoundaryLayer.value) return;
+
+      stateBoundaryLayer.value.eachLayer(layer => {
+        const feature = layer.feature;
+        const isSelected = selectedState.value?.id === feature?.properties?.id;
+
+        if (isSelected) {
+          layer.setStyle({
+            fillColor: props.content?.stateSelectedColor || '#0000ff',
+            fillOpacity: props.content?.stateSelectedOpacity || 0.5,
+            color: props.content?.stateBorderColor || '#666666',
+            weight: props.content?.stateBorderWidth || 1,
+            opacity: props.content?.stateBorderOpacity || 0.5
+          });
+        } else {
+          layer.setStyle({
+            fillColor: 'transparent',
+            fillOpacity: 0,
+            color: props.content?.stateBorderColor || '#666666',
+            weight: props.content?.stateBorderWidth || 1,
+            opacity: props.content?.stateBorderOpacity || 0.5
+          });
+        }
+      });
+    };
+
+    const createMultiUserHeatmap = (users) => {
       const zoneToIntensity = {
         '1a': 0.1, '1b': 0.15, '2a': 0.2, '2b': 0.25, '3a': 0.3, '3b': 0.35,
         '4a': 0.4, '4b': 0.45, '5a': 0.5, '5b': 0.55, '6a': 0.6, '6b': 0.65,
@@ -955,49 +1357,249 @@ export default {
         '13a': 1.3, '13b': 1.35
       };
 
-      // Create heatmap data points: [lat, lng, intensity]
       const heatmapData = users.map(user => {
         const intensity = zoneToIntensity[user.hardinessZone] || 0.7;
         return [user.lat, user.lng, intensity];
       });
 
-      // Create the heatmap layer
-      this.hardinessHeatmapLayer = L.heatLayer(heatmapData, {
-        radius: this.content?.hardinessHeatmapRadius || 50,
+      hardinessHeatmapLayer.value = L.heatLayer(heatmapData, {
+        radius: props.content?.hardinessHeatmapRadius || 50,
         blur: 25,
         maxZoom: 17,
         max: 1.4,
         gradient: {
-          0.0: '#d6d6ff',  // Zone 1a
-          0.1: '#c4c4f2',  // Zone 1b
-          0.15: '#ababd9', // Zone 2a
-          0.2: '#ebb0eb',  // Zone 2b
-          0.25: '#dd8fe8', // Zone 3a
-          0.3: '#cf7ddb',  // Zone 3b
-          0.35: '#a66bff', // Zone 4a
-          0.4: '#5a75ed',  // Zone 4b
-          0.45: '#73a1ff', // Zone 5a
-          0.5: '#5ec9e0',  // Zone 5b
-          0.55: '#47ba47', // Zone 6a
-          0.6: '#78c756',  // Zone 6b
-          0.65: '#abd669', // Zone 7a
-          0.7: '#cddb70',  // Zone 7b
-          0.75: '#edda85', // Zone 8a
-          0.8: '#ebcb57',  // Zone 8b
-          0.85: '#dbb64f', // Zone 9a
-          0.9: '#f5b678',  // Zone 9b
-          0.95: '#da9132', // Zone 10a
-          1.0: '#e6781e',  // Zone 10b
-          1.05: '#e6561e', // Zone 11a
-          1.1: '#e88564',  // Zone 11b
-          1.15: '#d4594e', // Zone 12a
-          1.2: '#b51228',  // Zone 12b
-          1.25: '#962f1d', // Zone 13a
-          1.3: '#751a00'   // Zone 13b
+          0.0: '#d6d6ff', 0.1: '#c4c4f2', 0.15: '#ababd9', 0.2: '#ebb0eb',
+          0.25: '#dd8fe8', 0.3: '#cf7ddb', 0.35: '#a66bff', 0.4: '#5a75ed',
+          0.45: '#73a1ff', 0.5: '#5ec9e0', 0.55: '#47ba47', 0.6: '#78c756',
+          0.65: '#abd669', 0.7: '#cddb70', 0.75: '#edda85', 0.8: '#ebcb57',
+          0.85: '#dbb64f', 0.9: '#f5b678', 0.95: '#da9132', 1.0: '#e6781e',
+          1.05: '#e6561e', 1.1: '#e88564', 1.15: '#d4594e', 1.2: '#b51228',
+          1.25: '#962f1d', 1.3: '#751a00'
         }
-      }).addTo(this.map);
-    },
+      }).addTo(map.value);
+    };
 
+    const initializeMap = () => {
+      if (!mapContainer.value) {
+        return;
+      }
+
+      const lat = props.content?.initialLat || 51.505;
+      const lng = props.content?.initialLng || -0.09;
+      const zoom = props.content?.initialZoom || 13;
+
+      try {
+        if (map.value) {
+          map.value.remove();
+          map.value = null;
+        }
+
+        map.value = L.map(mapContainer.value, {
+          dragging: true,
+          touchZoom: true,
+          doubleClickZoom: true,
+          scrollWheelZoom: true,
+          boxZoom: true,
+          keyboard: true,
+          zoomControl: true,
+          tap: true,
+          trackResize: true
+        }).setView([lat, lng], zoom);
+
+        // Ensure dragging is explicitly enabled
+        if (map.value.dragging) {
+          map.value.dragging.enable();
+        }
+
+        setupTileLayers();
+        updateMapType();
+
+        map.value.on('click', onMapClick);
+
+        setupResizeObserver();
+
+        map.value.whenReady(async () => {
+          updateMarkers();
+          updatePrivacyMode();
+          updateHardinessHeatmap();
+          await updateBoundaries();
+
+          map.value.on('moveend', updateBoundaries);
+          map.value.on('zoomend', updateBoundaries);
+
+          emit('trigger-event', {
+            name: 'map-ready',
+            event: {}
+          });
+        });
+      } catch (error) {
+        // Silent fail - map initialization errors handled by re-init
+      }
+    };
+
+    const reinitializeMap = () => {
+      if (mapContainer.value) {
+        initializeMap();
+      }
+    };
+
+    // CRITICAL: Watch ALL properties that affect component rendering
+    watch(() => [
+      props.content?.mapType,
+      props.content?.initialLat,
+      props.content?.initialLng,
+      props.content?.initialZoom,
+      props.content?.enableClustering,
+      props.content?.clusterMaxZoom,
+      props.content?.requestGeolocation,
+      props.content?.showUserLocation,
+      props.content?.centerOnUserLocation,
+      props.content?.enablePrivacyMode,
+      props.content?.privacyRadius,
+      props.content?.privacyRadiusMiles,
+      props.content?.privacyUnit,
+      props.content?.allowClickToMark,
+      props.content?.showHardinessHeatmap,
+      props.content?.hardinessHeatmapRadius,
+      props.content?.userHardinessZone,
+      props.content?.isOnline,
+      props.content?.allowMapTypeSelection,
+      props.content?.useVectorTiles,
+      props.content?.enableReverseGeocoding,
+      props.content?.enableCountryHover,
+      props.content?.enableStateHover,
+      props.content?.geocodingRateLimit,
+      props.content?.countryMinZoom,
+      props.content?.countryMaxZoom,
+      props.content?.stateMinZoom,
+      props.content?.stateMaxZoom
+    ], (newVals, oldVals) => {
+      // Handle specific property changes
+      if (newVals[0] !== oldVals?.[0]) { // mapType changed
+        nextTick(() => updateMapType());
+      }
+      if (newVals[1] !== oldVals?.[1] || newVals[2] !== oldVals?.[2] || newVals[3] !== oldVals?.[3]) { // position/zoom changed
+        nextTick(() => updateMapView());
+      }
+      if (newVals[4] !== oldVals?.[4] || newVals[5] !== oldVals?.[5]) { // clustering changed
+        nextTick(() => updateMarkers());
+      }
+      if (newVals[6] !== oldVals?.[6] && newVals[6] && !geolocationRequested.value) { // requestGeolocation enabled
+        requestUserLocation();
+      }
+      if (newVals[7] !== oldVals?.[7] || newVals[8] !== oldVals?.[8] || newVals[9] !== oldVals?.[9]) { // privacy/location changed
+        nextTick(() => updatePrivacyMode());
+      }
+      if (newVals[10] !== oldVals?.[10] || newVals[11] !== oldVals?.[11] || newVals[12] !== oldVals?.[12]) { // privacy radius changed
+        nextTick(() => updatePrivacyCircle());
+      }
+      if (newVals[14] !== oldVals?.[14] || newVals[15] !== oldVals?.[15] || newVals[16] !== oldVals?.[16]) { // hardiness changed
+        nextTick(() => updateHardinessHeatmap());
+      }
+      if (newVals[17] !== oldVals?.[17]) { // isOnline changed
+        updateMarkers();
+        if (userLocationMarker.value) {
+          updateUserLocationMarker();
+        }
+      }
+      if (newVals[20] !== oldVals?.[20] || newVals[21] !== oldVals?.[21]) { // boundary enable toggles changed
+        nextTick(() => updateBoundaries());
+      }
+    }, { deep: true });
+
+    // Watch style properties separately
+    watch(() => [
+      props.content?.mapHeight,
+      props.content?.mapStyle
+    ], () => {
+      nextTick(() => {
+        setTimeout(() => {
+          safeInvalidateSize();
+        }, 100);
+      });
+    }, { deep: true });
+
+    // Watch boundary styling properties (style-only updates, no re-fetch)
+    watch(() => [
+      props.content?.countryHoverColor,
+      props.content?.countryHoverOpacity,
+      props.content?.countryBorderColor,
+      props.content?.countryBorderWidth,
+      props.content?.countryBorderOpacity,
+      props.content?.countrySelectedColor,
+      props.content?.countrySelectedOpacity,
+      props.content?.stateHoverColor,
+      props.content?.stateHoverOpacity,
+      props.content?.stateBorderColor,
+      props.content?.stateBorderWidth,
+      props.content?.stateBorderOpacity,
+      props.content?.stateSelectedColor,
+      props.content?.stateSelectedOpacity
+    ], () => {
+      nextTick(() => {
+        updateCountryBoundaryStyles();
+        updateStateBoundaryStyles();
+      });
+    }, { deep: true });
+
+    // Watch processed markers and users data
+    watch(processedMarkers, () => {
+      updateMarkers();
+    }, { deep: true });
+
+    watch(processedUsersHardinessData, () => {
+      nextTick(() => updateHardinessHeatmap());
+    }, { deep: true });
+
+    // Lifecycle
+    onMounted(() => {
+      nextTick(() => {
+        initializeMap();
+        if (props.content?.requestGeolocation) {
+          requestUserLocation();
+        }
+
+        setTimeout(() => {
+          safeInvalidateSize();
+        }, 100);
+      });
+    });
+
+    onBeforeUnmount(() => {
+      if (hardinessHeatmapLayer.value) {
+        map.value?.removeLayer(hardinessHeatmapLayer.value);
+        hardinessHeatmapLayer.value = null;
+      }
+
+      if (resizeObserver.value) {
+        resizeObserver.value.disconnect();
+        resizeObserver.value = null;
+      }
+
+      if (resizeTimeout.value) {
+        clearTimeout(resizeTimeout.value);
+      }
+
+      if (map.value) {
+        map.value.remove();
+      }
+    });
+
+    return {
+      // Template refs
+      mapContainer,
+      // Computed
+      mapContainerStyle,
+      mapStyle,
+      showLocationInstructions,
+      geolocationRequested,
+      geolocationDenied,
+      /* wwEditor:start */
+      isEditing,
+      /* wwEditor:end */
+      // Expose for debugging if needed
+      content: computed(() => props.content)
+    };
   }
 };
 </script>
@@ -1007,12 +1609,12 @@ export default {
   position: relative;
   width: 100%;
   height: var(--map-height);
-  min-height: 200px; /* Ensure parent has minimum dimensions */
+  min-height: 200px;
 
   .map-container {
     width: 100%;
     height: 100%;
-    min-height: 200px; /* Ensure minimum dimensions for Leaflet */
+    min-height: 200px;
     background: #f0f0f0;
     position: relative;
   }
@@ -1037,7 +1639,6 @@ export default {
   }
 }
 
-/* Global styles for Leaflet markers */
 :global(.user-location-marker) {
   background: transparent;
   border: none;
@@ -1065,7 +1666,6 @@ export default {
   }
 }
 
-/* Fix marker cluster hover effects */
 :global(.marker-cluster) {
   background: rgba(181, 226, 140, 0.6) !important;
   border: 2px solid rgba(110, 204, 57, 0.8) !important;
@@ -1128,7 +1728,6 @@ export default {
   }
 }
 
-/* Mobile responsive */
 @media (max-width: 768px) {
   .openstreet-map {
     .location-instructions {
