@@ -1502,7 +1502,7 @@ export default {
           updateUserLocationMarker();
         }
       }
-      if (newVals[20] !== oldVals?.[20] || newVals[21] !== oldVals?.[21]) { // boundary enable toggles changed
+      if (newVals[20] !== oldVals?.[20] || newVals[21] !== oldVals?.[21] || newVals[23] !== oldVals?.[23] || newVals[24] !== oldVals?.[24] || newVals[25] !== oldVals?.[25] || newVals[26] !== oldVals?.[26]) { // boundary enable toggles and zoom levels changed
         nextTick(() => updateBoundaries());
       }
     }, { deep: true });
