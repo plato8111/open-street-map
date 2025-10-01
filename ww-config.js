@@ -310,6 +310,33 @@ export default {
       section: "settings",
       defaultValue: false,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Allow users to click on map to mark their location"
+      },
+      propertyHelp: "When enabled, users can click on the map to set a location marker. Works at zoom levels >= Location Zoom Threshold."
+      /* wwEditor:end */
+    },
+    locationZoomThreshold: {
+      label: {
+        en: "Location Zoom Threshold",
+      },
+      type: "Number",
+      section: "settings",
+      defaultValue: 8,
+      min: 1,
+      max: 18,
+      step: 1,
+      bindable: true,
+      hidden: content => !content?.allowClickToMark,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Zoom level threshold for location selection (1-18)"
+      },
+      propertyHelp: "At this zoom level and higher, boundaries hide and users can click to mark locations. Below this level, country/state boundaries are shown and clickable. Default: 8"
+      /* wwEditor:end */
     },
 
     // Reverse Geocoding Configuration
@@ -393,7 +420,7 @@ export default {
       },
       type: "Number",
       section: "countries",
-      defaultValue: 18,
+      defaultValue: 7,
       min: 1,
       max: 18,
       step: 1,
@@ -404,7 +431,7 @@ export default {
         type: "number",
         tooltip: "Maximum zoom level to show country boundaries (1-18)"
       },
-      propertyHelp: "Countries will only show when zoom level is <= this value"
+      propertyHelp: "Countries will only show when zoom level is <= this value. Default is 7 to hide boundaries at zoom 8+ (location selection mode)."
       /* wwEditor:end */
     },
     countryHoverColor: {
@@ -545,7 +572,7 @@ export default {
       },
       type: "Number",
       section: "states",
-      defaultValue: 18,
+      defaultValue: 7,
       min: 1,
       max: 18,
       step: 1,
@@ -556,7 +583,7 @@ export default {
         type: "number",
         tooltip: "Maximum zoom level to show state boundaries (1-18)"
       },
-      propertyHelp: "States will only show when zoom level is <= this value"
+      propertyHelp: "States will only show when zoom level is <= this value. Default is 7 to hide boundaries at zoom 8+ (location selection mode)."
       /* wwEditor:end */
     },
     stateHoverColor: {
@@ -798,7 +825,7 @@ export default {
     { name: "location-granted", label: "Location permission granted", event: { position: {} } },
     { name: "location-denied", label: "Location permission denied", event: {} },
     { name: "location-marked", label: "Location marked by click", event: { position: {} } },
-    { name: "map-click", label: "Map clicked", event: { position: {} } },
+    { name: "map-click", label: "Map clicked", event: { position: {}, zoom: 0, mode: "" } },
     { name: "map-ready", label: "Map initialized", event: {} },
     { name: "privacy-mode-toggled", label: "Privacy mode toggled", event: { enabled: false, previousMode: "" } },
     // Reverse Geocoding Events

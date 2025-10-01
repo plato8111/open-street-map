@@ -75,7 +75,7 @@ export default {
     const geolocationDenied = ref(false);
     const showUserLocation = ref(false);
     const userExactLat = ref(null);
-    const userExactLong = ref(null);
+    const userExactLng = ref(null);
 
     // Template refs
     const mapContainer = ref(null);
@@ -191,7 +191,7 @@ export default {
             id: marker.id || `marker-${Date.now()}-${Math.random()}`,
             name: marker.name || 'Untitled',
             lat: marker.lat || 0,
-            long: marker.long || 0,
+            lng: marker.lng || 0,
             description: marker.description || '',
             originalItem: marker,
             ...marker
@@ -199,25 +199,25 @@ export default {
         }
 
         const lat = resolveMappingFormula(props.content?.markersLatFormula, marker) ?? marker.lat;
-        const long = resolveMappingFormula(props.content?.markersLongFormula, marker) ?? marker.long;
+        const lng = resolveMappingFormula(props.content?.markersLngFormula, marker) ?? marker.lng;
         const name = resolveMappingFormula(props.content?.markersNameFormula, marker) ?? marker.name;
 
         return {
           id: marker.id || `marker-${Date.now()}-${Math.random()}`,
           name: name || 'Untitled',
           lat: parseFloat(lat) || 0,
-          long: parseFloat(long) || 0,
+          lng: parseFloat(lng) || 0,
           description: marker.description || '',
           originalItem: marker,
           ...marker
         };
       }).filter(marker =>
         !isNaN(marker.lat) &&
-        !isNaN(marker.long) &&
+        !isNaN(marker.lng) &&
         marker.lat >= -90 &&
         marker.lat <= 90 &&
-        marker.long >= -180 &&
-        marker.long <= 180
+        marker.lng >= -180 &&
+        marker.lng <= 180
       );
     });
 
@@ -232,7 +232,7 @@ export default {
         if (!resolveMappingFormula) {
           return {
             lat: user.lat || 0,
-            long: user.long || 0,
+            lng: user.lng || 0,
             hardinessZone: user.hardinessZone || '7a',
             name: user.name || 'User',
             originalItem: user,
@@ -241,12 +241,12 @@ export default {
         }
 
         const lat = resolveMappingFormula(props.content?.usersLatFormula, user) ?? user.lat;
-        const long = resolveMappingFormula(props.content?.usersLongFormula, user) ?? user.long;
+        const lng = resolveMappingFormula(props.content?.usersLngFormula, user) ?? user.lng;
         const zone = resolveMappingFormula(props.content?.usersZoneFormula, user) ?? user.hardinessZone;
 
         return {
           lat: parseFloat(lat) || 0,
-          long: parseFloat(long) || 0,
+          lng: parseFloat(lng) || 0,
           hardinessZone: zone || '7a',
           name: user.name || 'User',
           originalItem: user,
@@ -254,11 +254,11 @@ export default {
         };
       }).filter(user =>
         !isNaN(user.lat) &&
-        !isNaN(user.long) &&
+        !isNaN(user.lng) &&
         user.lat >= -90 &&
         user.lat <= 90 &&
-        user.long >= -180 &&
-        user.long <= 180
+        user.lng >= -180 &&
+        user.lng <= 180
       );
     });
 
@@ -285,7 +285,7 @@ export default {
     };
 
     // Helper: Get parent state for a location
-    const getLocationParentState = async (lat, long) => {
+    const getLocationParentState = async (lat, lng) => {
       const supabase = getSupabaseClient();
       const zoom = map.value?.getZoom() || 13;
       const stateMinZoom = props.content?.stateMinZoom ?? 4;
@@ -297,7 +297,7 @@ export default {
           .schema('gis')
           .rpc('find_state_at_point', {
             point_lat: lat,
-            point_lng: long
+            point_lng: lng
           });
 
         if (stateData && stateData.length > 0) {
@@ -318,7 +318,7 @@ export default {
     };
 
     // Helper: Get parent country for a location
-    const getLocationParentCountry = async (lat, long) => {
+    const getLocationParentCountry = async (lat, lng) => {
       const supabase = getSupabaseClient();
 
       try {
@@ -326,7 +326,7 @@ export default {
           .schema('gis')
           .rpc('find_country_at_point', {
             point_lat: lat,
-            point_lng: long
+            point_lng: lng
           });
 
         if (countryData && countryData.length > 0) {
@@ -392,7 +392,7 @@ export default {
       // Add marker for each selected location
       selectedLocations.value.forEach(location => {
         const markerColor = props.content?.selectedLocationMarkerColor || '#FF5722';
-        const marker = L.marker([location.lat, location.long], {
+        const marker = L.marker([location.lat, location.lng], {
           icon: L.divIcon({
             className: 'selected-location-marker',
             html: `<div class="selected-location-dot" style="background-color: ${markerColor}; border: 2px solid white; border-radius: 50%; width: 16px; height: 16px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);"></div>`,
@@ -483,7 +483,7 @@ export default {
             name: 'location-deselected',
             event: {
               location: location,
-              position: { lat: location.lat, long: location.long }
+              position: { lat: location.lat, lng: location.lng }
             }
           });
         });
@@ -573,10 +573,10 @@ export default {
       if (!map.value) return;
 
       const lat = props.content?.initialLat || 51.505;
-      const long = props.content?.initialLong || -0.09;
+      const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
-      map.value.setView([lat, long], zoom);
+      map.value.setView([lat, lng], zoom);
     };
 
     const updateMarkers = () => {
@@ -603,19 +603,19 @@ export default {
           });
 
           markers.forEach(markerData => {
-            const marker = L.marker([markerData.lat, markerData.long]);
+            const marker = L.marker([markerData.lat, markerData.lng]);
 
             marker.on('click', () => {
               setSelectedLocation({
                 marker: markerData,
-                position: { lat: markerData.lat, long: markerData.long }
+                position: { lat: markerData.lat, lng: markerData.lng }
               });
 
               emit('trigger-event', {
                 name: 'marker-click',
                 event: {
                   marker: markerData,
-                  position: { lat: markerData.lat, long: markerData.long }
+                  position: { lat: markerData.lat, lng: markerData.lng }
                 }
               });
             });
@@ -628,19 +628,19 @@ export default {
           markersLayer.value = L.layerGroup();
 
           markers.forEach(markerData => {
-            const marker = L.marker([markerData.lat, markerData.long]);
+            const marker = L.marker([markerData.lat, markerData.lng]);
 
             marker.on('click', () => {
               setSelectedLocation({
                 marker: markerData,
-                position: { lat: markerData.lat, long: markerData.long }
+                position: { lat: markerData.lat, lng: markerData.lng }
               });
 
               emit('trigger-event', {
                 name: 'marker-click',
                 event: {
                   marker: markerData,
-                  position: { lat: markerData.lat, long: markerData.long }
+                  position: { lat: markerData.lat, lng: markerData.lng }
                 }
               });
             });
@@ -656,7 +656,7 @@ export default {
     };
 
     const updateUserLocationMarker = () => {
-      if (!userLocationMarker.value || !userExactLat.value || !userExactLong.value) return;
+      if (!userLocationMarker.value || !userExactLat.value || !userExactLng.value) return;
 
       try {
         const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
@@ -693,7 +693,7 @@ export default {
 
       return {
         lat: distance * Math.cos(angle),
-        long: distance * Math.sin(angle)
+        lng: distance * Math.sin(angle)
       };
     };
 
@@ -706,17 +706,17 @@ export default {
       if (props.content?.enablePrivacyMode && props.content?.showUserLocation && map.value) {
         let centerLat, centerLng;
 
-        if (userExactLat.value && userExactLong.value) {
+        if (userExactLat.value && userExactLng.value) {
           const radius = getPrivacyRadiusInKm();
           const offset = generateRandomOffset(radius);
           centerLat = userExactLat.value + offset.lat;
-          centerLng = userExactLong.value + offset.long;
+          centerLng = userExactLng.value + offset.lng;
         } else if (userMarkedLocationMarker.value) {
           const markedPos = userMarkedLocationMarker.value.getLatLng();
           const radius = getPrivacyRadiusInKm();
           const offset = generateRandomOffset(radius);
           centerLat = markedPos.lat + offset.lat;
-          centerLng = (markedPos.lng || markedPos.long) + offset.long;
+          centerLng = markedPos.lng + offset.lng;
         } else {
           return;
         }
@@ -774,11 +774,11 @@ export default {
       showUserLocation.value = true;
 
       userExactLat.value = latitude;
-      userExactLong.value = longitude;
+      userExactLng.value = longitude;
 
       setUserLocation({
         lat: latitude,
-        long: longitude,
+        lng: longitude,
         timestamp: new Date().toISOString()
       });
 
@@ -803,7 +803,7 @@ export default {
             emit('trigger-event', {
               name: 'user-location-click',
               event: {
-                position: { lat: latitude, long: longitude },
+                position: { lat: latitude, lng: longitude },
                 type: 'user-location'
               }
             });
@@ -819,7 +819,7 @@ export default {
         emit('trigger-event', {
           name: 'location-granted',
           event: {
-            position: { lat: latitude, long: longitude }
+            position: { lat: latitude, lng: longitude }
           }
         });
 
@@ -907,17 +907,17 @@ export default {
     const onMapClick = async (e) => {
       if (!map.value) return;
 
-      const { lat, lng: long } = e.latlng;
+      const { lat, lng } = e.latlng;
       const zoom = map.value.getZoom();
       const threshold = props.content?.locationZoomThreshold || 8;
 
       // Detect geographic location (country/state) from clicked coordinates with zoom awareness
-      const detected = await detectGeographicLocation(lat, long, zoom);
+      const detected = await detectGeographicLocation(lat, lng, zoom);
 
       emit('trigger-event', {
         name: 'map-click',
         event: {
-          position: { lat, long },
+          position: { lat, lng },
           zoom: zoom,
           mode: zoom >= threshold ? 'location' : 'boundary',
           country: detected.country,
@@ -928,14 +928,14 @@ export default {
       // At location zoom threshold - add location to selections with hierarchical parents
       if (zoom >= threshold && props.content?.allowClickToMark) {
         // Get parent state and country
-        const parentState = await getLocationParentState(lat, long);
-        const parentCountry = await getLocationParentCountry(lat, long);
+        const parentState = await getLocationParentState(lat, lng);
+        const parentCountry = await getLocationParentCountry(lat, lng);
 
         // Add location to selections
         const locationData = {
           id: `loc-${Date.now()}`,
           lat,
-          long,
+          lng,
           timestamp: new Date().toISOString(),
           parentState: parentState,
           parentCountry: parentCountry
@@ -991,7 +991,7 @@ export default {
       updateLocationContext();
 
       if (props.content?.enableReverseGeocoding) {
-        debouncedReverseGeocode(lat, long, 'location-geocoded');
+        debouncedReverseGeocode(lat, lng, 'location-geocoded');
       }
 
       // Only allow marking location at or above threshold
@@ -1003,7 +1003,7 @@ export default {
         }
 
         const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
-        userMarkedLocationMarker.value = L.marker([lat, long], {
+        userMarkedLocationMarker.value = L.marker([lat, lng], {
           icon: L.divIcon({
             className: 'user-marked-location',
             html: `<div class="user-marked-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
@@ -1019,7 +1019,7 @@ export default {
             emit('trigger-event', {
               name: 'marked-location-click',
               event: {
-                position: { lat: pos.lat, long: pos.long },
+                position: { lat: pos.lat, lng: pos.lng },
                 type: 'marked-location'
               }
             });
@@ -1031,12 +1031,12 @@ export default {
         emit('trigger-event', {
           name: 'location-marked',
           event: {
-            position: { lat, long }
+            position: { lat, lng }
           }
         });
 
         if (props.content?.enableReverseGeocoding) {
-          debouncedReverseGeocode(lat, long, 'marked-location-geocoded');
+          debouncedReverseGeocode(lat, lng, 'marked-location-geocoded');
         }
       } catch (error) {
         // Silent fail - marked location marker not critical
@@ -1062,14 +1062,14 @@ export default {
     };
 
     // Reverse Geocoding
-    const reverseGeocode = async (lat, long) => {
+    const reverseGeocode = async (lat, lng) => {
       if (!props.content?.enableReverseGeocoding) return null;
 
       try {
         const rateLimit = props.content?.geocodingRateLimit || 1000;
 
         const response = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${long}&zoom=18&addressdetails=1`,
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
           {
             headers: {
               'User-Agent': 'WeWebOpenStreetMapComponent/1.0'
@@ -1107,20 +1107,20 @@ export default {
       }
     };
 
-    const debouncedReverseGeocode = (lat, long, eventName) => {
+    const debouncedReverseGeocode = (lat, lng, eventName) => {
       clearTimeout(geocodingDebounceTimer.value);
 
       const rateLimit = props.content?.geocodingRateLimit || 1000;
 
       geocodingDebounceTimer.value = setTimeout(async () => {
-        const geocoded = await reverseGeocode(lat, long);
+        const geocoded = await reverseGeocode(lat, lng);
 
         if (geocoded) {
           emit('trigger-event', {
             name: eventName,
             event: {
               geocoded,
-              coordinates: { lat, long }
+              coordinates: { lat, lng }
             }
           });
         }
@@ -1128,7 +1128,7 @@ export default {
     };
 
     // Geographic Detection (Country/State from coordinates) - Zoom-aware
-    const detectGeographicLocation = async (lat, long, currentZoom) => {
+    const detectGeographicLocation = async (lat, lng, currentZoom) => {
       try {
         const supabase = getSupabaseClient();
 
@@ -1144,7 +1144,7 @@ export default {
           .schema('gis')
           .rpc('find_country_at_point', {
             point_lat: lat,
-            point_lng: long
+            point_lng: lng
           });
 
         if (countryError) {
@@ -1171,7 +1171,7 @@ export default {
               .schema('gis')
               .rpc('find_state_at_point', {
                 point_lat: lat,
-                point_lng: long,
+                point_lng: lng,
                 country_id: countryData[0].id
               });
 
@@ -1499,7 +1499,7 @@ export default {
         name: 'country-hover',
         event: {
           country: feature.properties,
-          coordinates: { lat: e.latlng.lat, long: e.latlng.long }
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
         }
       });
     };
@@ -1597,7 +1597,7 @@ export default {
         name: 'country-click',
         event: {
           country: feature.properties,
-          coordinates: { lat: e.latlng.lat, long: e.latlng.long },
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng },
           action: isCurrentlySelected ? 'deselected' : 'selected',
           selectedCountries: Array.from(selectedCountries.value),
           selectedStates: Array.from(selectedStates.value),
@@ -1620,7 +1620,7 @@ export default {
         name: 'state-hover',
         event: {
           state: feature.properties,
-          coordinates: { lat: e.latlng.lat, long: e.latlng.long }
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
         }
       });
     };
@@ -1764,7 +1764,7 @@ export default {
         name: 'state-click',
         event: {
           state: feature.properties,
-          coordinates: { lat: e.latlng.lat, long: e.latlng.long },
+          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng },
           action: isCurrentlySelected ? 'deselected' : 'selected',
           selectedCountries: Array.from(selectedCountries.value),
           selectedStates: Array.from(selectedStates.value),
@@ -1943,7 +1943,7 @@ export default {
 
       const heatmapData = users.map(user => {
         const intensity = zoneToIntensity[user.hardinessZone] || 0.7;
-        return [user.lat, user.long, intensity];
+        return [user.lat, user.lng, intensity];
       });
 
       hardinessHeatmapLayer.value = L.heatLayer(heatmapData, {
@@ -1969,7 +1969,7 @@ export default {
       }
 
       const lat = props.content?.initialLat || 51.505;
-      const long = props.content?.initialLong || -0.09;
+      const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
       try {
@@ -2001,7 +2001,7 @@ export default {
           zoomControl: true,
           tap: true,
           trackResize: true
-        }).setView([lat, long], zoom);
+        }).setView([lat, lng], zoom);
 
         /* wwEditor:start */
         // Ensure dragging follows editor state
@@ -2066,7 +2066,7 @@ export default {
     watch(() => [
       props.content?.mapType,
       props.content?.initialLat,
-      props.content?.initialLong,
+      props.content?.initialLng,
       props.content?.initialZoom,
       props.content?.enableClustering,
       props.content?.clusterMaxZoom,
