@@ -303,6 +303,8 @@ export default {
     // Helper: Get parent state for a location
     const getLocationParentState = async (lat, lng) => {
       const supabase = getSupabaseClient();
+      if (!supabase) return null; // Gracefully handle missing Supabase
+
       const zoom = map.value?.getZoom() || 13;
       const stateMinZoom = props.content?.stateMinZoom ?? 4;
 
@@ -336,6 +338,7 @@ export default {
     // Helper: Get parent country for a location
     const getLocationParentCountry = async (lat, lng) => {
       const supabase = getSupabaseClient();
+      if (!supabase) return null; // Gracefully handle missing Supabase
 
       try {
         const { data: countryData } = await supabase
@@ -1147,6 +1150,7 @@ export default {
     const detectGeographicLocation = async (lat, lng, currentZoom) => {
       try {
         const supabase = getSupabaseClient();
+        if (!supabase) return { country: null, state: null }; // Gracefully handle missing Supabase
 
         // Get zoom thresholds
         const stateMinZoom = props.content?.stateMinZoom ?? 4;
@@ -1242,6 +1246,13 @@ export default {
         return;
       }
 
+      // Check if Supabase is available
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        console.warn('⚠️ Country boundaries disabled: Supabase not configured');
+        return;
+      }
+
       try {
         console.log('🌍 Loading country boundaries...');
 
@@ -1316,6 +1327,13 @@ export default {
     const loadStateBoundaries = async () => {
       if (!props.content?.enableStateHover || !map.value) return;
 
+      // Check if Supabase is available
+      const supabase = getSupabaseClient();
+      if (!supabase) {
+        console.warn('⚠️ State boundaries disabled: Supabase not configured');
+        return;
+      }
+
       try {
         console.log('Loading state boundaries...');
 
@@ -1384,6 +1402,7 @@ export default {
 
       try {
         const supabase = getSupabaseClient();
+        if (!supabase) return []; // Gracefully handle missing Supabase
 
         const { data, error } = await supabase
           .schema('gis')
@@ -1445,6 +1464,7 @@ export default {
 
       try {
         const supabase = getSupabaseClient();
+        if (!supabase) return []; // Gracefully handle missing Supabase
 
         const { data, error } = await supabase
           .schema('gis')

@@ -191,18 +191,19 @@ function getSupabaseClient() {
     }
 
     // All methods failed
-    console.error('❌ WeWeb Supabase plugin not found in any location');
-    console.error('Available wwLib properties:', typeof wwLib !== 'undefined' ? Object.keys(wwLib) : 'wwLib not available');
-    console.error('Please ensure:');
-    console.error('1. WeWeb Supabase plugin is installed and configured');
-    console.error('2. Plugin has valid projectUrl and apiKey settings');
-    console.error('3. Plugin has been initialized (check wwLib.wwPlugins.supabase.instance)');
+    console.warn('⚠️ WeWeb Supabase plugin not found in any location');
+    console.warn('Available wwLib properties:', typeof wwLib !== 'undefined' ? Object.keys(wwLib) : 'wwLib not available');
+    console.warn('Please ensure:');
+    console.warn('1. WeWeb Supabase plugin is installed and configured');
+    console.warn('2. Plugin has valid projectUrl and apiKey settings');
+    console.warn('3. Plugin has been initialized (check wwLib.wwPlugins.supabase.instance)');
+    console.warn('Component will work without Supabase but geographic features will be disabled');
 
-    throw new Error('Supabase plugin not available - please ensure WeWeb Supabase plugin is installed and configured');
+    return null; // Return null instead of throwing error
 
   } catch (error) {
     console.error('Error accessing Supabase client:', error);
-    throw error;
+    return null; // Return null instead of throwing error
   }
 }
 
