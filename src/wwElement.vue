@@ -35,6 +35,7 @@ L.Icon.Default.mergeOptions({
 });
 
 export default {
+  name: 'OpenStreetMap',
   props: {
     uid: { type: String, required: true },
     content: { type: Object, required: true },
