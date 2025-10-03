@@ -680,6 +680,21 @@ export default {
       },
       /* wwEditor:end */
     },
+    selectedLocationMarkerColor: {
+      label: {
+        en: "Selected Location Marker Color"
+      },
+      type: "Color",
+      section: "settings",
+      defaultValue: "#FF5722",
+      bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "Color for selected location markers"
+      },
+      /* wwEditor:end */
+    },
     isOnline: {
       label: {
         en: "Is Online",

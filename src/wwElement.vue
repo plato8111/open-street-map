@@ -66,6 +66,8 @@ export default {
     const selectedCountries = ref(new Set());
     const selectedStates = ref(new Set());
     const selectedLocations = ref([]);
+    const selectedCountry = ref(null);
+    const selectedState = ref(null);
     const hoveredCountry = ref(null);
     const hoveredState = ref(null);
     const geocodingDebounceTimer = ref(null);
@@ -122,6 +124,20 @@ export default {
       type: 'array',
       defaultValue: [],
     }) || { value: ref([]), setValue: () => {} };
+
+    const { value: selectedCountryData, setValue: setSelectedCountryData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedCountry',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    const { value: selectedStateData, setValue: setSelectedStateData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedState',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
 
     const { value: geocodedAddress, setValue: setGeocodedAddress } = wwLib?.wwVariable?.useComponentVariable({
       uid: props.uid,
