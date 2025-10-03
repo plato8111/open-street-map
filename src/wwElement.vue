@@ -45,6 +45,10 @@ export default {
   },
   emits: ['trigger-event'],
   setup(props, { emit }) {
+    // CRITICAL: Ensure wwLib is available as global, with fallback
+    if (typeof wwLib === 'undefined') {
+      console.warn('⚠️ OpenStreetMap: wwLib not available - component may have limited functionality');
+    }
     // Editor state
     /* wwEditor:start */
     const isEditing = computed(() => props.wwEditorState?.isEditing);
@@ -2219,14 +2223,24 @@ export default {
     // Lifecycle
     onMounted(() => {
       nextTick(() => {
-        initializeMap();
-        if (props.content?.requestGeolocation) {
-          requestUserLocation();
-        }
+        try {
+          initializeMap();
+          if (props.content?.requestGeolocation) {
+            requestUserLocation();
+          }
 
-        setTimeout(() => {
-          safeInvalidateSize();
-        }, 100);
+          setTimeout(() => {
+            safeInvalidateSize();
+          }, 100);
+        } catch (error) {
+          console.error('❌ OpenStreetMap: Failed to initialize map:', error);
+          console.error('Error details:', {
+            message: error.message,
+            stack: error.stack,
+            wwLibAvailable: typeof wwLib !== 'undefined',
+            mapContainerRef: !!mapContainer.value
+          });
+        }
       });
     });
 
