@@ -2,7 +2,7 @@
   "name": "openstreetmap",
   "version": "0.0.1",
   "scripts": {
-    "build": "weweb build -- name=openstreetmap type=section",
+    "build": "weweb build -- name=openstreetmap type=wwobject",
     "serve": "weweb serve"
   },
   "devDependencies": {
