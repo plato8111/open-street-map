@@ -1,0 +1,1164 @@
+<template>
+  <div class="openstreet-map" :style="mapContainerStyle">
+
+    <!-- Map Container -->
+    <div ref="mapContainer" class="map-container" :style="mapStyle"></div>
+
+
+    <!-- Location Instructions -->
+    <div v-if="showLocationInstructions" class="location-instructions">
+      <p v-if="!geolocationRequested && content?.allowClickToMark">
+        Click on the map to mark your location
+      </p>
+      <p v-else-if="geolocationDenied && content?.allowClickToMark">
+        Location access denied. Click on the map to mark your location
+      </p>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
+import 'leaflet.heat';
+import 'leaflet.vectorgrid';
+import { boundaryAPI, boundaryCache, getSupabaseClient } from './supabaseClient.js';
+import { vectorTileClient } from './vectorTileClient.js';
+
+// Fix Leaflet's default marker icon issue
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
+  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
+});
+
+// Props
+const props = defineProps({
+  uid: { type: String, required: true },
+  content: { type: Object, required: true },
+  /* wwEditor:start */
+  wwEditorState: { type: Object, required: true },
+  /* wwEditor:end */
+});
+
+// Emits
+const emit = defineEmits(['trigger-event']);
+
+// Refs - Map state
+const map = ref(null);
+const mapContainer = ref(null);
+const markersLayer = ref(null);
+const clusterGroup = ref(null);
+const userLocationMarker = ref(null);
+const userMarkedLocationMarker = ref(null);
+const privacyCircle = ref(null);
+const selectedMapType = ref('osm');
+const tileLayers = ref({});
+const resizeObserver = ref(null);
+const resizeTimeout = ref(null);
+const hardinessHeatmapLayer = ref(null);
+
+// Refs - Geolocation state
+const geolocationRequested = ref(false);
+const geolocationDenied = ref(false);
+const showUserLocation = ref(false);
+const userExactLat = ref(null);
+const userExactLng = ref(null);
+const privacyRadiusValue = ref(1);
+const privacyUnit = ref('km');
+
+// Refs - Boundary layers
+const countryBoundaryLayer = ref(null);
+const stateBoundaryLayer = ref(null);
+const selectedCountry = ref(null);
+const selectedState = ref(null);
+const countryVectorTileLayer = ref(null);
+const stateVectorTileLayer = ref(null);
+
+// Refs - Reverse geocoding
+const geocodingCache = ref(new Map());
+const lastGeocodingRequest = ref(0);
+
+// Internal variables for NoCode users
+let selectedLocationVariable = null;
+let userLocationVariable = null;
+let clickedLocationVariable = null;
+  computed: {
+    /* wwEditor:start */
+    isEditing() {
+      return this.wwEditorState?.isEditing;
+    },
+    /* wwEditor:end */
+
+    mapContainerStyle() {
+      return {
+        '--map-height': this.content?.mapHeight || '100%',
+        '--border-radius': this.content?.mapStyle || '8px'
+      };
+    },
+
+    mapStyle() {
+      return {
+        height: 'var(--map-height)',
+        borderRadius: 'var(--border-radius)',
+        overflow: 'hidden'
+      };
+    },
+
+    processedMarkers() {
+      const markers = this.content?.markers || [];
+      if (!Array.isArray(markers)) return [];
+
+      const { resolveMappingFormula } = wwLib?.wwFormula?.useFormula() || {};
+
+      return markers.map(marker => {
+        if (!resolveMappingFormula) {
+          return {
+            id: marker.id || `marker-${Date.now()}-${Math.random()}`,
+            name: marker.name || 'Untitled',
+            lat: marker.lat || 0,
+            lng: marker.lng || 0,
+            description: marker.description || '',
+            originalItem: marker,
+            ...marker
+          };
+        }
+
+        const lat = resolveMappingFormula(this.content?.markersLatFormula, marker) ?? marker.lat;
+        const lng = resolveMappingFormula(this.content?.markersLngFormula, marker) ?? marker.lng;
+        const name = resolveMappingFormula(this.content?.markersNameFormula, marker) ?? marker.name;
+
+        return {
+          id: marker.id || `marker-${Date.now()}-${Math.random()}`,
+          name: name || 'Untitled',
+          lat: parseFloat(lat) || 0,
+          lng: parseFloat(lng) || 0,
+          description: marker.description || '',
+          originalItem: marker,
+          ...marker
+        };
+      }).filter(marker =>
+        !isNaN(marker.lat) &&
+        !isNaN(marker.lng) &&
+        marker.lat >= -90 &&
+        marker.lat <= 90 &&
+        marker.lng >= -180 &&
+        marker.lng <= 180
+      );
+    },
+
+    showLocationInstructions() {
+      return this.content?.allowClickToMark && (!this.showUserLocation || this.geolocationDenied);
+    },
+
+    currentMapType() {
+      return this.content?.mapType || 'osm';
+    },
+
+    hardinessZoneColors() {
+      return {
+        '1a': '#d6d6ff',
+        '1b': '#c4c4f2',
+        '2a': '#ababd9',
+        '2b': '#ebb0eb',
+        '3a': '#dd8fe8',
+        '3b': '#cf7ddb',
+        '4a': '#a66bff',
+        '4b': '#5a75ed',
+        '5a': '#73a1ff',
+        '5b': '#5ec9e0',
+        '6a': '#47ba47',
+        '6b': '#78c756',
+        '7a': '#abd669',
+        '7b': '#cddb70',
+        '8a': '#edda85',
+        '8b': '#ebcb57',
+        '9a': '#dbb64f',
+        '9b': '#f5b678',
+        '10a': '#da9132',
+        '10b': '#e6781e',
+        '11a': '#e6561e',
+        '11b': '#e88564',
+        '12a': '#d4594e',
+        '12b': '#b51228',
+        '13a': '#962f1d',
+        '13b': '#751a00'
+      };
+    },
+
+    userHardinessZoneColor() {
+      const zone = this.content?.userHardinessZone || '7a';
+      return this.hardinessZoneColors[zone] || '#abd669';
+    },
+
+    processedUsersHardinessData() {
+      const users = this.content?.usersHardinessData || [];
+      if (!Array.isArray(users)) return [];
+
+      const { resolveMappingFormula } = wwLib?.wwFormula?.useFormula() || {};
+
+      return users.map(user => {
+        if (!resolveMappingFormula) {
+          return {
+            lat: user.lat || 0,
+            lng: user.lng || 0,
+            hardinessZone: user.hardinessZone || '7a',
+            name: user.name || 'User',
+            originalItem: user,
+            ...user
+          };
+        }
+
+        const lat = resolveMappingFormula(this.content?.usersLatFormula, user) ?? user.lat;
+        const lng = resolveMappingFormula(this.content?.usersLngFormula, user) ?? user.lng;
+        const zone = resolveMappingFormula(this.content?.usersZoneFormula, user) ?? user.hardinessZone;
+
+        return {
+          lat: parseFloat(lat) || 0,
+          lng: parseFloat(lng) || 0,
+          hardinessZone: zone || '7a',
+          name: user.name || 'User',
+          originalItem: user,
+          ...user
+        };
+      }).filter(user =>
+        !isNaN(user.lat) &&
+        !isNaN(user.lng) &&
+        user.lat >= -90 &&
+        user.lat <= 90 &&
+        user.lng >= -180 &&
+        user.lng <= 180
+      );
+    }
+  },
+
+  watch: {
+    'content.initialLat': function() { this.updateMapView(); },
+    'content.initialLng': function() { this.updateMapView(); },
+    'content.initialZoom': function() { this.updateMapView(); },
+    'content.mapType': function(newType) {
+      console.log('Map type watcher triggered:', newType);
+      this.$nextTick(() => {
+        this.updateMapType();
+      });
+    },
+    'content.enableClustering': function() { this.updateMarkers(); },
+    'content.clusterMaxZoom': function() { this.updateMarkers(); },
+    'content.enablePrivacyMode': function() {
+      this.$nextTick(() => {
+        this.updatePrivacyMode();
+      });
+    },
+    'content.showUserLocation': function() {
+      this.$nextTick(() => {
+        this.updatePrivacyMode();
+      });
+    },
+    'content.showHardinessHeatmap': function() {
+      this.$nextTick(() => {
+        this.updateHardinessHeatmap();
+      });
+    },
+    'content.userHardinessZone': function() {
+      this.$nextTick(() => {
+        this.updateHardinessHeatmap();
+      });
+    },
+    'content.hardinessHeatmapRadius': function() {
+      this.$nextTick(() => {
+        this.updateHardinessHeatmap();
+      });
+    },
+    processedUsersHardinessData: {
+      handler() {
+        this.$nextTick(() => {
+          this.updateHardinessHeatmap();
+        });
+      },
+      deep: true
+    },
+    'content.privacyRadius': function() {
+      this.$nextTick(() => {
+        this.updatePrivacyCircle();
+      });
+    },
+    'content.privacyRadiusMiles': function() {
+      this.$nextTick(() => {
+        this.updatePrivacyCircle();
+      });
+    },
+    'content.privacyUnit': function() {
+      this.$nextTick(() => {
+        this.updatePrivacyCircle();
+      });
+    },
+    'content.mapHeight': function() {
+      this.$nextTick(() => {
+        setTimeout(() => {
+          this.safeInvalidateSize();
+        }, 100);
+      });
+    },
+    processedMarkers: {
+      handler() { this.updateMarkers(); },
+      deep: true
+    },
+    'content.mapStyle': function() {
+      this.$nextTick(() => {
+        this.safeInvalidateSize();
+      });
+    },
+    'content.allowMapTypeSelection': function() {
+      // Force re-render of map type selector
+      this.$forceUpdate();
+    },
+    'content.allowClickToMark': function() {
+      // Update instructions visibility
+      this.$forceUpdate();
+    },
+    'content.requestGeolocation': function(newVal) {
+      if (newVal && !this.geolocationRequested) {
+        this.requestUserLocation();
+      }
+    },
+    'content.centerOnUserLocation': function() {
+      if (this.userExactLat && this.userExactLng && this.content?.centerOnUserLocation) {
+        this.map?.setView([this.userExactLat, this.userExactLng], this.content?.initialZoom || 15);
+      }
+    },
+    'content.isOnline': function() {
+      // Update marker colors based on online status
+      this.updateMarkers();
+      if (this.userLocationMarker) {
+        this.updateUserLocationMarker();
+      }
+    },
+  },
+
+  mounted() {
+    // Initialize internal variables for NoCode users
+    this.initializeInternalVariables();
+
+    this.$nextTick(() => {
+      this.initializeMap();
+      if (this.content?.requestGeolocation) {
+        this.requestUserLocation();
+      }
+
+      // Ensure map is properly sized after DOM settles
+      setTimeout(() => {
+        this.safeInvalidateSize();
+      }, 100);
+    });
+  },
+
+  beforeUnmount() {
+    // Clean up heatmap
+    if (this.hardinessHeatmapLayer) {
+      this.map?.removeLayer(this.hardinessHeatmapLayer);
+      this.hardinessHeatmapLayer = null;
+    }
+
+    // Clean up resize observer
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+      this.resizeObserver = null;
+    }
+
+    // Clean up resize timeout
+    if (this.resizeTimeout) {
+      clearTimeout(this.resizeTimeout);
+    }
+
+    // Clean up map
+    if (this.map) {
+      this.map.remove();
+    }
+  },
+
+  methods: {
+    initializeInternalVariables() {
+      // Initialize internal variables for NoCode users
+      try {
+        this.selectedLocationVariable = wwLib?.wwVariable?.useComponentVariable({
+          uid: this.uid,
+          name: 'selectedLocation',
+          type: 'object',
+          defaultValue: null,
+        });
+
+        this.userLocationVariable = wwLib?.wwVariable?.useComponentVariable({
+          uid: this.uid,
+          name: 'userLocation',
+          type: 'object',
+          defaultValue: null,
+        });
+
+        this.clickedLocationVariable = wwLib?.wwVariable?.useComponentVariable({
+          uid: this.uid,
+          name: 'clickedLocation',
+          type: 'object',
+          defaultValue: null,
+        });
+      } catch (error) {
+        console.warn('Failed to initialize internal variables:', error);
+      }
+    },
+
+    initializeMap() {
+      if (!this.$refs.mapContainer) {
+        console.warn('Map container not ready');
+        return;
+      }
+
+      const lat = this.content?.initialLat || 51.505;
+      const lng = this.content?.initialLng || -0.09;
+      const zoom = this.content?.initialZoom || 13;
+
+      try {
+        // Remove any existing map first
+        if (this.map) {
+          this.map.remove();
+          this.map = null;
+        }
+
+        // Simple map initialization - enable all interactions
+        this.map = L.map(this.$refs.mapContainer, {
+          dragging: true,
+          touchZoom: true,
+          doubleClickZoom: true,
+          scrollWheelZoom: true,
+          boxZoom: true,
+          keyboard: true,
+          zoomControl: true
+        }).setView([lat, lng], zoom);
+
+        this.setupTileLayers();
+        this.selectedMapType = this.content?.mapType || 'osm';
+        this.updateMapType();
+
+        // Add click handler for coordinate events
+        this.map.on('click', this.onMapClick);
+
+        // Set up resize observer for dynamic resizing
+        this.setupResizeObserver();
+
+        // Wait for map to be fully initialized before adding markers
+        this.map.whenReady(() => {
+          this.updateMarkers();
+          this.initializePrivacyMode();
+          this.updateHardinessHeatmap();
+
+          this.$emit('trigger-event', {
+            name: 'map-ready',
+            event: {}
+          });
+        });
+      } catch (error) {
+        console.error('Error initializing map:', error);
+      }
+    },
+
+
+
+    setupResizeObserver() {
+      const frontWindow = wwLib?.getFrontWindow ? wwLib.getFrontWindow() : window;
+      if (!this.$refs.mapContainer || !frontWindow.ResizeObserver) return;
+
+      this.resizeObserver = new frontWindow.ResizeObserver(() => {
+        // Debounce the resize to avoid too many calls
+        clearTimeout(this.resizeTimeout);
+        this.resizeTimeout = setTimeout(() => {
+          this.safeInvalidateSize();
+        }, 150);
+      });
+
+      this.resizeObserver.observe(this.$refs.mapContainer);
+    },
+
+    safeInvalidateSize() {
+      if (!this.map) return;
+
+      const container = this.map.getContainer();
+      if (!container) return;
+
+      // Check if container has dimensions
+      if (container.offsetWidth === 0 || container.offsetHeight === 0) {
+        console.warn('Map container has no dimensions, skipping invalidateSize');
+        return;
+      }
+
+      // Check if map panes are ready
+      const mapPane = container.querySelector('.leaflet-map-pane');
+      if (!mapPane) {
+        console.warn('Map panes not ready, skipping invalidateSize');
+        return;
+      }
+
+      try {
+        this.map.invalidateSize();
+      } catch (error) {
+        console.warn('Failed to invalidate map size:', error);
+      }
+    },
+
+    setupTileLayers() {
+      this.tileLayers = {
+        osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors'
+        }),
+        satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+          attribution: '© Esri, DigitalGlobe, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community'
+        }),
+        terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenTopoMap contributors'
+        }),
+        dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+          attribution: '© CartoDB, © OpenStreetMap contributors'
+        }),
+        light: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+          attribution: '© CartoDB, © OpenStreetMap contributors'
+        })
+      };
+    },
+
+    updateMapType() {
+      if (!this.map || !this.tileLayers) return;
+
+      const newMapType = this.currentMapType;
+
+      // Update selectedMapType
+      this.selectedMapType = newMapType;
+
+      // Remove all existing tile layers
+      Object.values(this.tileLayers).forEach(layer => {
+        if (this.map.hasLayer(layer)) {
+          this.map.removeLayer(layer);
+        }
+      });
+
+      // Add the selected layer
+      const selectedLayer = this.tileLayers[newMapType];
+      if (selectedLayer) {
+        selectedLayer.addTo(this.map);
+        console.log(`Map type changed to: ${newMapType}`);
+      } else {
+        console.warn(`Unknown map type: ${newMapType}, available types:`, Object.keys(this.tileLayers));
+      }
+    },
+
+    changeMapType() {
+      this.updateMapType();
+    },
+
+    updateMapView() {
+      if (!this.map) return;
+
+      const lat = this.content?.initialLat || 51.505;
+      const lng = this.content?.initialLng || -0.09;
+      const zoom = this.content?.initialZoom || 13;
+
+      this.map.setView([lat, lng], zoom);
+    },
+
+    updateMarkers() {
+      if (!this.map || !this.map.getContainer()) return;
+
+      try {
+        if (this.markersLayer) {
+          this.map.removeLayer(this.markersLayer);
+        }
+        if (this.clusterGroup) {
+          this.map.removeLayer(this.clusterGroup);
+        }
+
+        const markers = this.processedMarkers;
+        if (!markers.length) return;
+
+        if (this.content?.enableClustering) {
+          this.clusterGroup = L.markerClusterGroup({
+            maxClusterRadius: 50,
+            disableClusteringAtZoom: this.content?.clusterMaxZoom || 15,
+            showCoverageOnHover: false,
+            zoomToBoundsOnClick: true,
+            spiderfyOnMaxZoom: true
+          });
+
+          markers.forEach(markerData => {
+            const marker = L.marker([markerData.lat, markerData.lng]);
+
+            // Remove default popup - use custom WeWeb popup instead
+            marker.on('click', () => {
+              this.$emit('trigger-event', {
+                name: 'marker-click',
+                event: {
+                  marker: markerData,
+                  position: { lat: markerData.lat, lng: markerData.lng }
+                }
+              });
+            });
+
+            this.clusterGroup.addLayer(marker);
+          });
+
+          this.map.addLayer(this.clusterGroup);
+        } else {
+          this.markersLayer = L.layerGroup();
+
+          markers.forEach(markerData => {
+            const marker = L.marker([markerData.lat, markerData.lng]);
+
+            // Remove default popup - use custom WeWeb popup instead
+            marker.on('click', () => {
+              this.$emit('trigger-event', {
+                name: 'marker-click',
+                event: {
+                  marker: markerData,
+                  position: { lat: markerData.lat, lng: markerData.lng }
+                }
+              });
+            });
+
+            this.markersLayer.addLayer(marker);
+          });
+
+          this.map.addLayer(this.markersLayer);
+        }
+      } catch (error) {
+        console.error('Error updating markers:', error);
+      }
+    },
+
+    updateUserLocationMarker() {
+      if (!this.userLocationMarker || !this.userExactLat || !this.userExactLng) return;
+
+      try {
+        // Update marker color based on online status
+        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        const newIcon = L.divIcon({
+          className: 'user-location-marker',
+          html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10]
+        });
+
+        this.userLocationMarker.setIcon(newIcon);
+      } catch (error) {
+        console.error('Error updating user location marker:', error);
+      }
+    },
+
+    requestUserLocation() {
+      const frontWindow = wwLib?.getFrontWindow() || window;
+      if (!frontWindow.navigator?.geolocation) return;
+
+      this.geolocationRequested = true;
+
+      frontWindow.navigator.geolocation.getCurrentPosition(
+        this.onLocationSuccess,
+        this.onLocationError,
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      );
+    },
+
+    onLocationSuccess(position) {
+      if (!this.map) {
+        console.warn('Map not ready for location update');
+        return;
+      }
+
+      const { latitude, longitude } = position.coords;
+      this.showUserLocation = true;
+
+      // Store the EXACT coordinates for internal use
+      this.userExactLat = latitude;
+      this.userExactLng = longitude;
+
+      // Update internal variable for NoCode users
+      if (this.userLocationVariable?.setValue) {
+        this.userLocationVariable.setValue({
+          lat: latitude,
+          lng: longitude,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      try {
+        // Remove existing marker if any
+        if (this.userLocationMarker) {
+          this.map.removeLayer(this.userLocationMarker);
+        }
+
+        // Create marker at EXACT location (will be shown/hidden based on privacy mode)
+        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        this.userLocationMarker = L.marker([latitude, longitude], {
+          icon: L.divIcon({
+            className: 'user-location-marker',
+            html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+          })
+        });
+
+        // Show exact marker ONLY when privacy mode is OFF
+        if (!this.content?.enablePrivacyMode) {
+          this.userLocationMarker.addTo(this.map);
+          // Remove default popup - use custom WeWeb popup instead
+          this.userLocationMarker.on('click', () => {
+            this.$emit('trigger-event', {
+              name: 'user-location-click',
+              event: {
+                position: { lat: latitude, lng: longitude },
+                type: 'user-location'
+              }
+            });
+          });
+        }
+
+        // Center map on user location if requested
+        if (this.content?.centerOnUserLocation) {
+          this.map.setView([latitude, longitude], this.content?.initialZoom || 15);
+        }
+
+        // Update privacy circle (will show/hide based on privacy mode)
+        this.updatePrivacyMode();
+
+        this.$emit('trigger-event', {
+          name: 'location-granted',
+          event: {
+            position: { lat: latitude, lng: longitude }
+          }
+        });
+      } catch (error) {
+        console.error('Error adding user location marker:', error);
+      }
+    },
+
+    onLocationError() {
+      this.geolocationDenied = true;
+      this.$emit('trigger-event', {
+        name: 'location-denied',
+        event: {}
+      });
+    },
+
+    onMapClick(e) {
+      if (!this.map) return;
+
+      const { lat, lng } = e.latlng;
+
+      // Always emit map click event for debugging/console purposes
+      this.$emit('trigger-event', {
+        name: 'map-click',
+        event: {
+          position: { lat, lng }
+        }
+      });
+
+      // Update internal variable for NoCode users
+      if (this.clickedLocationVariable?.setValue) {
+        this.clickedLocationVariable.setValue({
+          lat,
+          lng,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // Only proceed with location marking if enabled
+      if (!this.content?.allowClickToMark) return;
+
+      try {
+        // Remove existing marked location marker
+        if (this.userMarkedLocationMarker) {
+          this.map.removeLayer(this.userMarkedLocationMarker);
+        }
+
+        // Create new marked location marker
+        const markerColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        this.userMarkedLocationMarker = L.marker([lat, lng], {
+          icon: L.divIcon({
+            className: 'user-marked-location',
+            html: `<div class="user-marked-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10]
+          })
+        });
+
+        // Show marker only if privacy mode is OFF
+        if (!this.content?.enablePrivacyMode) {
+          this.userMarkedLocationMarker.addTo(this.map);
+          // Remove default popup - use custom WeWeb popup instead
+          this.userMarkedLocationMarker.on('click', () => {
+            const pos = this.userMarkedLocationMarker.getLatLng();
+            this.$emit('trigger-event', {
+              name: 'marked-location-click',
+              event: {
+                position: { lat: pos.lat, lng: pos.lng },
+                type: 'marked-location'
+              }
+            });
+          });
+        }
+
+        // Update privacy circle to reflect new location
+        this.updatePrivacyCircle();
+
+        this.$emit('trigger-event', {
+          name: 'location-marked',
+          event: {
+            position: { lat, lng }
+          }
+        });
+      } catch (error) {
+        console.error('Error adding marked location marker:', error);
+      }
+    },
+
+    initializePrivacyMode() {
+      this.privacyRadiusValue = this.content?.privacyRadius || 1;
+      this.privacyUnit = this.content?.privacyUnit || 'km';
+    },
+
+    updatePrivacyMode() {
+      if (!this.map) return;
+
+      // Handle user location marker visibility
+      if (this.userLocationMarker) {
+        if (this.content?.enablePrivacyMode || !this.content?.showUserLocation) {
+          // Privacy ON OR showUserLocation OFF: Hide exact marker
+          if (this.map.hasLayer(this.userLocationMarker)) {
+            this.map.removeLayer(this.userLocationMarker);
+          }
+        } else {
+          // Privacy OFF AND showUserLocation ON: Show exact marker
+          if (!this.map.hasLayer(this.userLocationMarker)) {
+            this.userLocationMarker.addTo(this.map);
+          }
+        }
+      }
+
+      // Handle privacy circle
+      this.updatePrivacyCircle();
+
+      // Handle marked location marker (click-to-mark)
+      if (this.userMarkedLocationMarker) {
+        if (this.content?.enablePrivacyMode) {
+          // Privacy ON: Hide exact marked location
+          if (this.map.hasLayer(this.userMarkedLocationMarker)) {
+            this.map.removeLayer(this.userMarkedLocationMarker);
+          }
+        } else {
+          // Privacy OFF: Show exact marked location
+          if (!this.map.hasLayer(this.userMarkedLocationMarker)) {
+            this.userMarkedLocationMarker.addTo(this.map);
+          }
+        }
+      }
+    },
+
+    updatePrivacyCircle() {
+      // Remove existing circle
+      if (this.privacyCircle) {
+        this.map.removeLayer(this.privacyCircle);
+        this.privacyCircle = null;
+      }
+
+      // Only show circle in privacy mode AND when we have a location AND showUserLocation is enabled
+      if (this.content?.enablePrivacyMode && this.content?.showUserLocation && this.map) {
+        let centerLat, centerLng;
+
+        if (this.userExactLat && this.userExactLng) {
+          // Use geolocation coordinates with random offset
+          const radius = this.getPrivacyRadiusInKm();
+          const offset = this.generateRandomOffset(radius);
+          centerLat = this.userExactLat + offset.lat;
+          centerLng = this.userExactLng + offset.lng;
+        } else if (this.userMarkedLocationMarker) {
+          // Use marked location coordinates with random offset
+          const markedPos = this.userMarkedLocationMarker.getLatLng();
+          const radius = this.getPrivacyRadiusInKm();
+          const offset = this.generateRandomOffset(radius);
+          centerLat = markedPos.lat + offset.lat;
+          centerLng = markedPos.lng + offset.lng;
+        } else {
+          return; // No location to show privacy circle for
+        }
+
+        const radiusInMeters = this.getPrivacyRadiusInKm() * 1000;
+        const circleColor = this.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+
+        this.privacyCircle = L.circle([centerLat, centerLng], {
+          radius: radiusInMeters,
+          color: circleColor,
+          fillColor: circleColor,
+          fillOpacity: 0.2,
+          weight: 2,
+          dashArray: '5, 5'
+        }).addTo(this.map);
+      }
+    },
+
+    togglePrivacyMode() {
+      console.log('Privacy mode toggle clicked');
+
+      // Simple alert to test if the click is working
+      alert('Privacy toggle clicked! Current mode: ' + (this.content?.enablePrivacyMode ? 'Private' : 'Exact'));
+
+      // Emit trigger event
+      this.$emit('trigger-event', {
+        name: 'privacy-mode-toggled',
+        event: {
+          enabled: !this.content?.enablePrivacyMode,
+          previousMode: this.content?.enablePrivacyMode ? 'private' : 'exact'
+        }
+      });
+    },
+
+    getPrivacyRadiusInKm() {
+      const unit = this.content?.privacyUnit || 'km';
+      let radius;
+
+      if (unit === 'miles') {
+        radius = this.content?.privacyRadiusMiles || 0.62;
+        return radius * 1.60934; // Convert miles to km
+      } else {
+        radius = this.content?.privacyRadius || 1;
+        return radius;
+      }
+    },
+
+    generateRandomOffset(radiusKm) {
+      const radiusInDegrees = radiusKm / 111.32;
+      const angle = Math.random() * 2 * Math.PI;
+      const distance = Math.random() * radiusInDegrees;
+
+      return {
+        lat: distance * Math.cos(angle),
+        lng: distance * Math.sin(angle)
+      };
+    },
+
+    updateHardinessHeatmap() {
+      // Remove existing heatmap layers
+      if (this.hardinessHeatmapLayer) {
+        this.map.removeLayer(this.hardinessHeatmapLayer);
+        this.hardinessHeatmapLayer = null;
+      }
+
+      // Only show heatmap if enabled and we have users data
+      if (!this.content?.showHardinessHeatmap || !this.map) {
+        return;
+      }
+
+      const users = this.processedUsersHardinessData;
+      if (!users.length) {
+        // No users data - don't show anything
+        return;
+      }
+
+      // Create multi-user heatmap
+      this.createMultiUserHeatmap(users);
+    },
+
+    createMultiUserHeatmap(users) {
+      // Convert hardiness zones to numeric values for intensity
+      const zoneToIntensity = {
+        '1a': 0.1, '1b': 0.15, '2a': 0.2, '2b': 0.25, '3a': 0.3, '3b': 0.35,
+        '4a': 0.4, '4b': 0.45, '5a': 0.5, '5b': 0.55, '6a': 0.6, '6b': 0.65,
+        '7a': 0.7, '7b': 0.75, '8a': 0.8, '8b': 0.85, '9a': 0.9, '9b': 0.95,
+        '10a': 1.0, '10b': 1.05, '11a': 1.1, '11b': 1.15, '12a': 1.2, '12b': 1.25,
+        '13a': 1.3, '13b': 1.35
+      };
+
+      // Create heatmap data points: [lat, lng, intensity]
+      const heatmapData = users.map(user => {
+        const intensity = zoneToIntensity[user.hardinessZone] || 0.7;
+        return [user.lat, user.lng, intensity];
+      });
+
+      // Create the heatmap layer
+      this.hardinessHeatmapLayer = L.heatLayer(heatmapData, {
+        radius: this.content?.hardinessHeatmapRadius || 50,
+        blur: 25,
+        maxZoom: 17,
+        max: 1.4,
+        gradient: {
+          0.0: '#d6d6ff',  // Zone 1a
+          0.1: '#c4c4f2',  // Zone 1b
+          0.15: '#ababd9', // Zone 2a
+          0.2: '#ebb0eb',  // Zone 2b
+          0.25: '#dd8fe8', // Zone 3a
+          0.3: '#cf7ddb',  // Zone 3b
+          0.35: '#a66bff', // Zone 4a
+          0.4: '#5a75ed',  // Zone 4b
+          0.45: '#73a1ff', // Zone 5a
+          0.5: '#5ec9e0',  // Zone 5b
+          0.55: '#47ba47', // Zone 6a
+          0.6: '#78c756',  // Zone 6b
+          0.65: '#abd669', // Zone 7a
+          0.7: '#cddb70',  // Zone 7b
+          0.75: '#edda85', // Zone 8a
+          0.8: '#ebcb57',  // Zone 8b
+          0.85: '#dbb64f', // Zone 9a
+          0.9: '#f5b678',  // Zone 9b
+          0.95: '#da9132', // Zone 10a
+          1.0: '#e6781e',  // Zone 10b
+          1.05: '#e6561e', // Zone 11a
+          1.1: '#e88564',  // Zone 11b
+          1.15: '#d4594e', // Zone 12a
+          1.2: '#b51228',  // Zone 12b
+          1.25: '#962f1d', // Zone 13a
+          1.3: '#751a00'   // Zone 13b
+        }
+      }).addTo(this.map);
+    },
+
+  }
+};
+</script>
+
+<style lang="scss" scoped>
+.openstreet-map {
+  position: relative;
+  width: 100%;
+  height: var(--map-height);
+  min-height: 200px; /* Ensure parent has minimum dimensions */
+
+  .map-container {
+    width: 100%;
+    height: 100%;
+    min-height: 200px; /* Ensure minimum dimensions for Leaflet */
+    background: #f0f0f0;
+    position: relative;
+  }
+
+  .location-instructions {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 14px;
+    text-align: center;
+    pointer-events: none;
+
+    p {
+      margin: 0;
+    }
+  }
+}
+
+/* Global styles for Leaflet markers */
+:global(.user-location-marker) {
+  background: transparent;
+  border: none;
+
+  .user-location-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #4285f4;
+    border: 3px solid white;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: white;
+    }
+  }
+}
+
+/* Fix marker cluster hover effects */
+:global(.marker-cluster) {
+  background: rgba(181, 226, 140, 0.6) !important;
+  border: 2px solid rgba(110, 204, 57, 0.8) !important;
+  border-radius: 50% !important;
+}
+
+:global(.marker-cluster:hover) {
+  background: rgba(181, 226, 140, 0.8) !important;
+  border-color: rgba(110, 204, 57, 1) !important;
+  box-shadow: none !important;
+}
+
+:global(.marker-cluster div) {
+  background: transparent !important;
+  color: #000 !important;
+  font-weight: bold !important;
+  text-shadow: 1px 1px 1px rgba(255, 255, 255, 0.8) !important;
+}
+
+:global(.user-marked-location) {
+  background: transparent;
+  border: none;
+
+  .user-marked-dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #ff6b6b;
+    border: 3px solid white;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: white;
+    }
+  }
+}
+
+:global(.marker-popup) {
+  text-align: center;
+
+  h4 {
+    margin: 0 0 8px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  p {
+    margin: 0;
+    font-size: 14px;
+    color: #666;
+  }
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .openstreet-map {
+    .location-instructions {
+      bottom: 5px;
+      left: 5px;
+      right: 5px;
+      transform: none;
+      font-size: 12px;
+    }
+  }
+}
+</style>
+

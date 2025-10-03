@@ -2176,11 +2176,13 @@ export default {
       props.content?.stateBorderWidth,
       props.content?.stateBorderOpacity,
       props.content?.stateSelectedColor,
-      props.content?.stateSelectedOpacity
+      props.content?.stateSelectedOpacity,
+      props.content?.selectedLocationMarkerColor
     ], () => {
       nextTick(() => {
         updateCountryBoundaryStyles();
         updateStateBoundaryStyles();
+        updateSelectedLocationMarkers(); // Re-render markers with new color
       });
     }, { deep: true });
 
