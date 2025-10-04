@@ -46,9 +46,12 @@ export default {
   emits: ['trigger-event'],
   setup(props, { emit }) {
     // CRITICAL: Ensure wwLib is available as global, with fallback
-    if (typeof wwLib === 'undefined') {
-      console.warn('⚠️ OpenStreetMap: wwLib not available - component may have limited functionality');
+    const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
+
+    if (!hasWwLib) {
+      console.warn('⚠️ OpenStreetMap: wwLib not fully available - component will use fallback mode');
     }
+
     // Editor state
     /* wwEditor:start */
     const isEditing = computed(() => props.wwEditorState?.isEditing);
@@ -88,82 +91,104 @@ export default {
     const mapContainer = ref(null);
 
     // Internal variables for NoCode users
-    const { value: selectedLocation, setValue: setSelectedLocation } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'selectedLocation',
-      type: 'object',
-      defaultValue: null,
-    }) || { value: ref(null), setValue: () => {} };
+    const { value: selectedLocation, setValue: setSelectedLocation } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'selectedLocation',
+          type: 'object',
+          defaultValue: null,
+        })
+      : { value: ref(null), setValue: () => {} };
 
-    const { value: userLocation, setValue: setUserLocation } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'userLocation',
-      type: 'object',
-      defaultValue: null,
-    }) || { value: ref(null), setValue: () => {} };
+    const { value: userLocation, setValue: setUserLocation } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'userLocation',
+          type: 'object',
+          defaultValue: null,
+        })
+      : { value: ref(null), setValue: () => {} };
 
-    const { value: clickedLocation, setValue: setClickedLocation } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'clickedLocation',
-      type: 'object',
-      defaultValue: null,
-    }) || { value: ref(null), setValue: () => {} };
+    const { value: clickedLocation, setValue: setClickedLocation } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'clickedLocation',
+          type: 'object',
+          defaultValue: null,
+        })
+      : { value: ref(null), setValue: () => {} };
 
-    const { value: selectedCountriesData, setValue: setSelectedCountriesData } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'selectedCountries',
-      type: 'array',
-      defaultValue: [],
-    }) || { value: ref([]), setValue: () => {} };
+    const { value: selectedCountriesData, setValue: setSelectedCountriesData } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'selectedCountries',
+          type: 'array',
+          defaultValue: [],
+        })
+      : { value: ref([]), setValue: () => {} };
 
-    const { value: selectedStatesData, setValue: setSelectedStatesData } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'selectedStates',
-      type: 'array',
-      defaultValue: [],
-    }) || { value: ref([]), setValue: () => {} };
+    const { value: selectedStatesData, setValue: setSelectedStatesData } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'selectedStates',
+          type: 'array',
+          defaultValue: [],
+        })
+      : { value: ref([]), setValue: () => {} };
 
-    const { value: selectedLocationsData, setValue: setSelectedLocationsData } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'selectedLocations',
-      type: 'array',
-      defaultValue: [],
-    }) || { value: ref([]), setValue: () => {} };
+    const { value: selectedLocationsData, setValue: setSelectedLocationsData } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'selectedLocations',
+          type: 'array',
+          defaultValue: [],
+        })
+      : { value: ref([]), setValue: () => {} };
 
-    const { value: selectedCountryData, setValue: setSelectedCountryData } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'selectedCountry',
-      type: 'object',
-      defaultValue: null,
-    }) || { value: ref(null), setValue: () => {} };
+    const { value: selectedCountryData, setValue: setSelectedCountryData } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'selectedCountry',
+          type: 'object',
+          defaultValue: null,
+        })
+      : { value: ref(null), setValue: () => {} };
 
-    const { value: selectedStateData, setValue: setSelectedStateData } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'selectedState',
-      type: 'object',
-      defaultValue: null,
-    }) || { value: ref(null), setValue: () => {} };
+    const { value: selectedStateData, setValue: setSelectedStateData } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'selectedState',
+          type: 'object',
+          defaultValue: null,
+        })
+      : { value: ref(null), setValue: () => {} };
 
-    const { value: geocodedAddress, setValue: setGeocodedAddress } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'geocodedAddress',
-      type: 'object',
-      defaultValue: null,
-    }) || { value: ref(null), setValue: () => {} };
+    const { value: geocodedAddress, setValue: setGeocodedAddress } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'geocodedAddress',
+          type: 'object',
+          defaultValue: null,
+        })
+      : { value: ref(null), setValue: () => {} };
 
-    const { value: currentZoomLevel, setValue: setCurrentZoomLevel } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'currentZoomLevel',
-      type: 'number',
-      defaultValue: 13,
-    }) || { value: ref(13), setValue: () => {} };
+    const { value: currentZoomLevel, setValue: setCurrentZoomLevel } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'currentZoomLevel',
+          type: 'number',
+          defaultValue: 13,
+        })
+      : { value: ref(13), setValue: () => {} };
 
-    const { value: locationContext, setValue: setLocationContext } = wwLib?.wwVariable?.useComponentVariable({
-      uid: props.uid,
-      name: 'locationContext',
-      type: 'object',
-      defaultValue: null,
-    }) || { value: ref(null), setValue: () => {} };
+    const { value: locationContext, setValue: setLocationContext } = hasWwLib
+      ? wwLib.wwVariable.useComponentVariable({
+          uid: props.uid,
+          name: 'locationContext',
+          type: 'object',
+          defaultValue: null,
+        })
+      : { value: ref(null), setValue: () => {} };
 
     // Computed styles
     const mapContainerStyle = computed(() => ({
