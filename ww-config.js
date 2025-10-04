@@ -1,4 +1,5 @@
 export default {
+  name: "OpenStreetMap",
   editor: {
     label: {
       en: "OpenStreet Map",
