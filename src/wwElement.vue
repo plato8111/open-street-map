@@ -167,11 +167,11 @@ export default {
 
     // Computed styles
     const mapContainerStyle = computed(() => ({
-      '--border-radius': props.content?.mapStyle || '8px'
+      '--border-radius': props.content?.mapStyle || '8px',
+      height: props.content?.mapHeight || '400px'
     }));
 
     const mapStyle = computed(() => ({
-      height: props.content?.mapHeight || '400px',
       borderRadius: 'var(--border-radius)',
       overflow: 'hidden'
     }));
@@ -2286,13 +2286,10 @@ export default {
 .openstreet-map {
   position: relative;
   width: 100%;
-  height: 100%;
-  min-height: 0;
 
   .map-container {
     width: 100%;
     height: 100%;
-    min-height: 400px;
     background: #f0f0f0;
     position: relative;
   }
