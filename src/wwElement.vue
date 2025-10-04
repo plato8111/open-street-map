@@ -53,22 +53,16 @@ export default {
   },
   setup(props, { emit }) {
     console.log('🚀 OpenStreetMap setup() function called!');
+
+    // Check if we're in WeWeb environment
+    const isWeWeb = typeof wwLib !== 'undefined';
+    console.log('🔍 WeWeb environment detected:', isWeWeb);
+
+    if (!isWeWeb) {
+      console.warn('⚠️ Not in WeWeb environment - component may not work properly');
+    }
+
     try {
-      // CRITICAL: Ensure wwLib is available as global, with fallback
-      console.log('🔍 OpenStreetMap: Checking wwLib availability...');
-      console.log('typeof wwLib:', typeof wwLib);
-      console.log('wwLib exists:', !!wwLib);
-      console.log('wwLib.wwVariable exists:', !!(wwLib && wwLib.wwVariable));
-      console.log('wwLib.wwVariable.useComponentVariable type:', typeof (wwLib && wwLib.wwVariable && wwLib.wwVariable.useComponentVariable));
-
-      const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
-
-      if (!hasWwLib) {
-        console.warn('⚠️ OpenStreetMap: wwLib not fully available - component will use fallback mode');
-        console.warn('Available global objects:', Object.keys(window || global || {}));
-      } else {
-        console.log('✅ OpenStreetMap: wwLib is fully available');
-      }
 
       // Editor state
       /* wwEditor:start */
@@ -2286,26 +2280,35 @@ export default {
     // Lifecycle
     onMounted(() => {
       console.log('🎯 OpenStreetMap component mounted');
+      console.log('Map container element:', mapContainer.value);
+
       nextTick(() => {
         console.log('🔄 Next tick - initializing component...');
-        try {
-          initializeMap();
-          if (props.content?.requestGeolocation) {
-            console.log('Requesting user location...');
-            requestUserLocation();
-          }
 
-          setTimeout(() => {
-            safeInvalidateSize();
-          }, 100);
-        } catch (error) {
-          console.error('❌ OpenStreetMap: Failed to initialize map:', error);
-          console.error('Error details:', {
-            message: error.message,
-            stack: error.stack,
-            wwLibAvailable: typeof wwLib !== 'undefined',
-            mapContainerRef: !!mapContainer.value
-          });
+        // Simple test initialization first
+        if (mapContainer.value) {
+          console.log('✅ Map container found, attempting basic initialization...');
+
+          try {
+            // Create a very basic map first to test if Leaflet works
+            if (typeof L !== 'undefined') {
+              console.log('✅ Leaflet is available');
+
+              const testMap = L.map(mapContainer.value).setView([51.505, -0.09], 13);
+              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(testMap);
+
+              console.log('✅ Basic map created successfully');
+
+              // Now try full initialization
+              initializeMap();
+            } else {
+              console.error('❌ Leaflet not available');
+            }
+          } catch (error) {
+            console.error('❌ Basic map initialization failed:', error);
+          }
+        } else {
+          console.error('❌ Map container not found');
         }
       });
     });
