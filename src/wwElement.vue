@@ -17,22 +17,30 @@
 
 <script>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+console.log('📦 Loading Leaflet dependencies...');
 import L from 'leaflet';
+console.log('✅ Leaflet loaded:', typeof L);
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
+console.log('✅ Leaflet MarkerCluster loaded');
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.heat';
+console.log('✅ Leaflet Heat loaded');
 import { boundaryAPI, boundaryCache, getSupabaseClient } from './supabaseClient.js';
+console.log('✅ Supabase client loaded');
 import { vectorTileClient } from './vectorTileClient.js';
+console.log('✅ Vector tile client loaded');
 
 // Fix Leaflet's default marker icon issue
+console.log('🔧 Fixing Leaflet marker icons...');
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
 });
+console.log('✅ Leaflet marker icons fixed');
 
 export default {
   name: 'OpenStreetMap',
@@ -46,10 +54,19 @@ export default {
   emits: ['trigger-event'],
   setup(props, { emit }) {
     // CRITICAL: Ensure wwLib is available as global, with fallback
+    console.log('🔍 OpenStreetMap: Checking wwLib availability...');
+    console.log('typeof wwLib:', typeof wwLib);
+    console.log('wwLib exists:', !!wwLib);
+    console.log('wwLib.wwVariable exists:', !!(wwLib && wwLib.wwVariable));
+    console.log('wwLib.wwVariable.useComponentVariable type:', typeof (wwLib && wwLib.wwVariable && wwLib.wwVariable.useComponentVariable));
+
     const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
 
     if (!hasWwLib) {
       console.warn('⚠️ OpenStreetMap: wwLib not fully available - component will use fallback mode');
+      console.warn('Available global objects:', Object.keys(window || global || {}));
+    } else {
+      console.log('✅ OpenStreetMap: wwLib is fully available');
     }
 
     // Editor state
@@ -91,6 +108,7 @@ export default {
     const mapContainer = ref(null);
 
     // Internal variables for NoCode users
+    console.log('🔧 Setting up component variables...');
     const { value: selectedLocation, setValue: setSelectedLocation } = hasWwLib
       ? wwLib.wwVariable.useComponentVariable({
           uid: props.uid,
@@ -99,6 +117,7 @@ export default {
           defaultValue: null,
         })
       : { value: ref(null), setValue: () => {} };
+    console.log('selectedLocation variable setup:', { hasWwLib, value: selectedLocation.value });
 
     const { value: userLocation, setValue: setUserLocation } = hasWwLib
       ? wwLib.wwVariable.useComponentVariable({
@@ -2029,7 +2048,12 @@ export default {
     };
 
     const initializeMap = () => {
+      console.log('🗺️ Initializing map...');
+      console.log('Map container ref:', mapContainer.value);
+      console.log('Map container element:', mapContainer.value?.tagName);
+
       if (!mapContainer.value) {
+        console.error('❌ Map container not found - cannot initialize map');
         return;
       }
 
@@ -2037,8 +2061,11 @@ export default {
       const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
+      console.log('Map config:', { lat, lng, zoom, content: props.content });
+
       try {
         if (map.value) {
+          console.log('Removing existing map instance');
           map.value.remove();
           map.value = null;
         }
@@ -2048,6 +2075,7 @@ export default {
         const allowInteraction = !isEditing.value;
         /* wwEditor:end */
 
+        console.log('Creating Leaflet map instance...');
         map.value = L.map(mapContainer.value, {
           /* wwEditor:start */
           dragging: allowInteraction,
@@ -2067,6 +2095,7 @@ export default {
           tap: true,
           trackResize: true
         }).setView([lat, lng], zoom);
+        console.log('✅ Map instance created successfully');
 
         /* wwEditor:start */
         // Ensure dragging follows editor state
@@ -2090,7 +2119,9 @@ export default {
 
         setupResizeObserver();
 
+        console.log('Setting up map ready callback...');
         map.value.whenReady(async () => {
+          console.log('🗺️ Map is ready, initializing features...');
           updateMarkers();
           updatePrivacyMode();
           updateHardinessHeatmap();
@@ -2111,13 +2142,20 @@ export default {
             setCurrentZoomLevel(map.value.getZoom());
           });
 
+          console.log('✅ Map fully initialized and ready');
           emit('trigger-event', {
             name: 'map-ready',
             event: {}
           });
         });
       } catch (error) {
-        // Silent fail - map initialization errors handled by re-init
+        console.error('❌ Map initialization failed:', error);
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          wwLibAvailable: typeof wwLib !== 'undefined',
+          mapContainerRef: !!mapContainer.value
+        });
       }
     };
 
@@ -2246,10 +2284,13 @@ export default {
 
     // Lifecycle
     onMounted(() => {
+      console.log('🎯 OpenStreetMap component mounted');
       nextTick(() => {
+        console.log('🔄 Next tick - initializing component...');
         try {
           initializeMap();
           if (props.content?.requestGeolocation) {
+            console.log('Requesting user location...');
             requestUserLocation();
           }
 
