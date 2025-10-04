@@ -57,7 +57,7 @@ export default {
       },
       type: "Length",
       section: "style",
-      defaultValue: "100%",
+      defaultValue: "400px",
       bindable: true,
     },
 
