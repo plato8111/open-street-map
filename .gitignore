@@ -23,7 +23,8 @@ bower_components
 .lock-wscript
 # Compiled binary addons (https://nodejs.org/api/addons.html)
 build/Release
-dist
+# IMPORTANT: dist folder must be committed for WeWeb to load the component
+# dist
 # Dependency directories
 node_modules/
 jspm_packages/
