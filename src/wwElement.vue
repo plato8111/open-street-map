@@ -16,7 +16,6 @@
 </template>
 
 <script>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 console.log('📦 Loading Leaflet dependencies...');
 import L from 'leaflet';
 console.log('✅ Leaflet loaded:', typeof L);
@@ -51,56 +50,60 @@ export default {
     wwEditorState: { type: Object, required: true },
     /* wwEditor:end */
   },
-  setup(props, { emit }) {
-    console.log('🚀 OpenStreetMap setup() function called!');
+  data() {
+    // CRITICAL: Ensure wwLib is available as global, with fallback
+    console.log('🔍 OpenStreetMap: Checking wwLib availability...');
+    console.log('typeof wwLib:', typeof wwLib);
+    console.log('wwLib exists:', !!wwLib);
+    console.log('wwLib.wwVariable exists:', !!(wwLib && wwLib.wwVariable));
+    console.log('wwLib.wwVariable.useComponentVariable type:', typeof (wwLib && wwLib.wwVariable && wwLib.wwVariable.useComponentVariable));
 
-    // Check if we're in WeWeb environment
-    const isWeWeb = typeof wwLib !== 'undefined';
-    console.log('🔍 WeWeb environment detected:', isWeWeb);
+    const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
 
-    if (!isWeWeb) {
-      console.warn('⚠️ Not in WeWeb environment - component may not work properly');
+    if (!hasWwLib) {
+      console.warn('⚠️ OpenStreetMap: wwLib not fully available - component will use fallback mode');
+      console.warn('Available global objects:', Object.keys(window || global || {}));
+    } else {
+      console.log('✅ OpenStreetMap: wwLib is fully available');
     }
 
-    try {
+    // Editor state
+    /* wwEditor:start */
+    const isEditing = computed(() => props.wwEditorState?.isEditing);
+    /* wwEditor:end */
 
-      // Editor state
-      /* wwEditor:start */
-      const isEditing = computed(() => props.wwEditorState?.isEditing);
-      /* wwEditor:end */
+    // Non-reactive state (map instances)
+    const map = ref(null);
+    const markersLayer = ref(null);
+    const clusterGroup = ref(null);
+    const userLocationMarker = ref(null);
+    const userMarkedLocationMarker = ref(null);
+    const privacyCircle = ref(null);
+    const tileLayers = ref({});
+    const resizeObserver = ref(null);
+    const resizeTimeout = ref(null);
+    const hardinessHeatmapLayer = ref(null);
+    const countryBoundaryLayer = ref(null);
+    const stateBoundaryLayer = ref(null);
+    const selectedLocationMarkers = ref(null); // Layer group for selected location markers
+    const selectedCountries = ref(new Set());
+    const selectedStates = ref(new Set());
+    const selectedLocations = ref([]);
+    const selectedCountry = ref(null);
+    const selectedState = ref(null);
+    const hoveredCountry = ref(null);
+    const hoveredState = ref(null);
+    const geocodingDebounceTimer = ref(null);
 
-      // Non-reactive state (map instances)
-      const map = ref(null);
-      const markersLayer = ref(null);
-      const clusterGroup = ref(null);
-      const userLocationMarker = ref(null);
-      const userMarkedLocationMarker = ref(null);
-      const privacyCircle = ref(null);
-      const tileLayers = ref({});
-      const resizeObserver = ref(null);
-      const resizeTimeout = ref(null);
-      const hardinessHeatmapLayer = ref(null);
-      const countryBoundaryLayer = ref(null);
-      const stateBoundaryLayer = ref(null);
-      const selectedLocationMarkers = ref(null); // Layer group for selected location markers
-      const selectedCountries = ref(new Set());
-      const selectedStates = ref(new Set());
-      const selectedLocations = ref([]);
-      const selectedCountry = ref(null);
-      const selectedState = ref(null);
-      const hoveredCountry = ref(null);
-      const hoveredState = ref(null);
-      const geocodingDebounceTimer = ref(null);
+    // Component state
+    const geolocationRequested = ref(false);
+    const geolocationDenied = ref(false);
+    const showUserLocation = ref(false);
+    const userExactLat = ref(null);
+    const userExactLng = ref(null);
 
-      // Component state
-      const geolocationRequested = ref(false);
-      const geolocationDenied = ref(false);
-      const showUserLocation = ref(false);
-      const userExactLat = ref(null);
-      const userExactLng = ref(null);
-
-      // Template refs
-      const mapContainer = ref(null);
+    // Template refs
+    const mapContainer = ref(null);
 
     // Internal variables for NoCode users
     console.log('🔧 Setting up component variables...');
@@ -2280,35 +2283,26 @@ export default {
     // Lifecycle
     onMounted(() => {
       console.log('🎯 OpenStreetMap component mounted');
-      console.log('Map container element:', mapContainer.value);
-
       nextTick(() => {
         console.log('🔄 Next tick - initializing component...');
-
-        // Simple test initialization first
-        if (mapContainer.value) {
-          console.log('✅ Map container found, attempting basic initialization...');
-
-          try {
-            // Create a very basic map first to test if Leaflet works
-            if (typeof L !== 'undefined') {
-              console.log('✅ Leaflet is available');
-
-              const testMap = L.map(mapContainer.value).setView([51.505, -0.09], 13);
-              L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(testMap);
-
-              console.log('✅ Basic map created successfully');
-
-              // Now try full initialization
-              initializeMap();
-            } else {
-              console.error('❌ Leaflet not available');
-            }
-          } catch (error) {
-            console.error('❌ Basic map initialization failed:', error);
+        try {
+          initializeMap();
+          if (props.content?.requestGeolocation) {
+            console.log('Requesting user location...');
+            requestUserLocation();
           }
-        } else {
-          console.error('❌ Map container not found');
+
+          setTimeout(() => {
+            safeInvalidateSize();
+          }, 100);
+        } catch (error) {
+          console.error('❌ OpenStreetMap: Failed to initialize map:', error);
+          console.error('Error details:', {
+            message: error.message,
+            stack: error.stack,
+            wwLibAvailable: typeof wwLib !== 'undefined',
+            mapContainerRef: !!mapContainer.value
+          });
         }
       });
     });
@@ -2333,29 +2327,21 @@ export default {
       }
     });
 
-      return {
-        // Template refs
-        mapContainer,
-        // Computed
-        mapContainerStyle,
-        mapStyle,
-        showLocationInstructions,
-        geolocationRequested,
-        geolocationDenied,
-        /* wwEditor:start */
-        isEditing,
-        /* wwEditor:end */
-        // Expose for debugging if needed
-        content: computed(() => props.content)
-      };
-    } catch (error) {
-      console.error('❌ OpenStreetMap setup() failed:', error);
-      console.error('Error details:', {
-        message: error.message,
-        stack: error.stack
-      });
-      return {};
-    }
+    return {
+      // Template refs
+      mapContainer,
+      // Computed
+      mapContainerStyle,
+      mapStyle,
+      showLocationInstructions,
+      geolocationRequested,
+      geolocationDenied,
+      /* wwEditor:start */
+      isEditing,
+      /* wwEditor:end */
+      // Expose for debugging if needed
+      content: computed(() => props.content)
+    };
   }
 };
 </script>
