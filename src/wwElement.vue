@@ -276,6 +276,19 @@ export default {
       );
     });
 
+    // Computed property for selected locations data - automatically reactive
+    const processedSelectedLocations = computed(() => {
+      return selectedLocations.value.map(location => ({
+        ...location,
+        properties: location?.feature?.properties || null
+      })).filter(Boolean);
+    });
+
+    // Computed property for current zoom - automatically reactive
+    const computedCurrentZoomLevel = computed(() => {
+      return map.value?.getZoom?.() || 13;
+    });
+
     const processedUsersHardinessData = computed(() => {
       const users = props.content?.usersHardinessData || [];
       if (!Array.isArray(users)) return [];
@@ -585,7 +598,7 @@ export default {
     };
 
     const setupResizeObserver = () => {
-      const frontWindow = (wwLib?.getFrontWindow && wwLib.getFrontWindow()) || (typeof window !== 'undefined' ? window : null);
+      const frontWindow = wwLib?.getFrontWindow?.() || null;
       if (!mapContainer.value || !frontWindow || !frontWindow.ResizeObserver) return;
 
       resizeObserver.value = new frontWindow.ResizeObserver(() => {
@@ -890,7 +903,7 @@ export default {
     };
 
     const requestUserLocation = () => {
-      const frontWindow = (wwLib?.getFrontWindow && wwLib.getFrontWindow()) || (typeof window !== 'undefined' ? window : null);
+      const frontWindow = wwLib?.getFrontWindow?.() || null;
       if (!frontWindow || !frontWindow.navigator?.geolocation) return;
 
       geolocationRequested.value = true;
@@ -2231,6 +2244,26 @@ export default {
 
     watch(processedUsersHardinessData, () => {
       nextTick(() => updateHardinessHeatmap());
+    }, { deep: true });
+
+    // Sync computed properties to internal variables for WeWeb editor
+    watch(processedSelectedLocations, (newLocations) => {
+      if (newLocations.length !== selectedLocationsData.value.length) {
+        setSelectedLocationsData(newLocations);
+      }
+    }, { deep: true });
+
+    watch(computedCurrentZoomLevel, (newZoom) => {
+      if (newZoom !== currentZoomLevel.value) {
+        setCurrentZoomLevel(newZoom);
+      }
+    });
+
+    watch(locationContext, (newContext) => {
+      // Keep internal variable in sync when location context changes
+      if (JSON.stringify(newContext) !== JSON.stringify(locationContext.value)) {
+        // Internal variable is already updated via setValue(), no need to re-sync
+      }
     }, { deep: true });
 
     // Lifecycle
