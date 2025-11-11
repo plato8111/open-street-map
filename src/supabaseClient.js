@@ -192,18 +192,36 @@ export const boundaryAPI = {
 
     return {
       type: 'FeatureCollection',
-      features: boundaries.map(boundary => ({
-        type: 'Feature',
-        id: boundary.id,
-        properties: {
-          name: boundary.name,
-          iso_a2: boundary.iso_a2,
-          iso_a3: boundary.iso_a3,
-          iso_3166_2: boundary.iso_3166_2,
-          country_code: boundary.country_code
-        },
-        geometry: boundary.geometry
-      }))
+      features: boundaries.map(boundary => {
+        // Vector tiles return geometry_geojson as a JSON string that needs parsing
+        // Direct Supabase API returns geometry as an object
+        let geometry;
+        if (boundary.geometry_geojson) {
+          try {
+            geometry = typeof boundary.geometry_geojson === 'string'
+              ? JSON.parse(boundary.geometry_geojson)
+              : boundary.geometry_geojson;
+          } catch (error) {
+            console.error('Failed to parse geometry_geojson:', error);
+            return null;
+          }
+        } else {
+          geometry = boundary.geometry;
+        }
+
+        return {
+          type: 'Feature',
+          id: boundary.id,
+          properties: {
+            name: boundary.name,
+            iso_a2: boundary.iso_a2,
+            iso_a3: boundary.iso_a3,
+            iso_3166_2: boundary.iso_3166_2,
+            country_code: boundary.country_code
+          },
+          geometry: geometry
+        };
+      }).filter(feature => feature !== null) // Remove any features that failed to parse
     };
   }
 };
