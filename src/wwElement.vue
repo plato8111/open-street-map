@@ -68,7 +68,8 @@ export default {
     const hoveredState = ref(null);
     const geocodingDebounceTimer = ref(null);
     const lastGeocodingRequest = ref(0); // Track last request time for rate limiting
-    const geocodingQueue = ref([]); // Queue for pending requests
+    const geocodingAbortController = ref(null); // Track abort controller for request cancellation
+    const boundaryDebounceTimer = ref(null); // Debounce timer for boundary updates
 
     // Component state
     const geolocationRequested = ref(false);
@@ -405,10 +406,10 @@ export default {
       if (!userLocationMarker.value || !userExactLat.value || !userExactLng.value) return;
 
       try {
-        const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        const statusClass = props.content?.isOnline ? 'online' : 'offline';
         const newIcon = L.divIcon({
           className: 'user-location-marker',
-          html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
+          html: `<div class="user-location-dot ${statusClass}"></div>`,
           iconSize: [20, 20],
           iconAnchor: [10, 10]
         });
@@ -533,11 +534,11 @@ export default {
           map.value.removeLayer(userLocationMarker.value);
         }
 
-        const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        const statusClass = props.content?.isOnline ? 'online' : 'offline';
         userLocationMarker.value = L.marker([latitude, longitude], {
           icon: L.divIcon({
             className: 'user-location-marker',
-            html: `<div class="user-location-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
+            html: `<div class="user-location-dot ${statusClass}"></div>`,
             iconSize: [20, 20],
             iconAnchor: [10, 10]
           })
@@ -627,11 +628,11 @@ export default {
           map.value.removeLayer(userMarkedLocationMarker.value);
         }
 
-        const markerColor = props.content?.isOnline ? '#4CAF50' : '#9E9E9E';
+        const statusClass = props.content?.isOnline ? 'online' : 'offline';
         userMarkedLocationMarker.value = L.marker([lat, lng], {
           icon: L.divIcon({
             className: 'user-marked-location',
-            html: `<div class="user-marked-dot" style="background-color: ${markerColor}; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);"></div>`,
+            html: `<div class="user-marked-dot ${statusClass}"></div>`,
             iconSize: [20, 20],
             iconAnchor: [10, 10]
           })
@@ -686,9 +687,17 @@ export default {
       createMultiUserHeatmap(users);
     };
 
-    // Reverse Geocoding with Rate Limiting
+    // Reverse Geocoding with Rate Limiting and Request Cancellation
     const reverseGeocode = async (lat, lng) => {
       if (!props.content?.enableReverseGeocoding) return null;
+
+      // Cancel any pending geocoding request
+      if (geocodingAbortController.value) {
+        geocodingAbortController.value.abort();
+      }
+
+      // Create new AbortController for this request
+      geocodingAbortController.value = new AbortController();
 
       const rateLimit = props.content?.geocodingRateLimit || 1000;
       const now = Date.now();
@@ -709,7 +718,8 @@ export default {
           {
             headers: {
               'User-Agent': 'WeWebOpenStreetMapComponent/1.0'
-            }
+            },
+            signal: geocodingAbortController.value.signal
           }
         );
 
@@ -740,6 +750,10 @@ export default {
 
         return geocoded;
       } catch (error) {
+        // Don't log errors for aborted requests
+        if (error.name === 'AbortError') {
+          return null;
+        }
         console.error('Reverse geocoding error:', error);
         return null;
       }
@@ -1255,6 +1269,14 @@ export default {
       }
     };
 
+    // Debounced version to prevent excessive boundary updates during pan/zoom
+    const debouncedUpdateBoundaries = () => {
+      clearTimeout(boundaryDebounceTimer.value);
+      boundaryDebounceTimer.value = setTimeout(() => {
+        updateBoundaries();
+      }, 250); // 250ms debounce delay
+    };
+
     const updateCountryBoundaryStyles = () => {
       if (!countryBoundaryLayer.value) return;
 
@@ -1380,14 +1402,14 @@ export default {
         map.value.whenReady(async () => {
           // Attach ALL event listeners inside whenReady to prevent null reference errors
           map.value.on('click', onMapClick);
-          map.value.on('moveend', updateBoundaries);
-          map.value.on('zoomend', updateBoundaries);
+          map.value.on('moveend', debouncedUpdateBoundaries);
+          map.value.on('zoomend', debouncedUpdateBoundaries);
 
           // Initialize map features after ready
           updateMarkers();
           updatePrivacyMode();
           updateHardinessHeatmap();
-          await updateBoundaries();
+          await updateBoundaries(); // Initial load is not debounced
 
           emit('trigger-event', {
             name: 'map-ready',
@@ -1405,69 +1427,82 @@ export default {
       }
     };
 
-    // CRITICAL: Watch ALL properties that affect component rendering
+    // Focused watchers - More performant than single massive watcher
+    // Watch map type changes
+    watch(() => props.content?.mapType, () => {
+      nextTick(() => updateMapType());
+    });
+
+    // Watch map position/zoom changes
     watch(() => [
-      props.content?.mapType,
       props.content?.initialLat,
       props.content?.initialLng,
-      props.content?.initialZoom,
+      props.content?.initialZoom
+    ], () => {
+      nextTick(() => updateMapView());
+    });
+
+    // Watch clustering changes
+    watch(() => [
       props.content?.enableClustering,
-      props.content?.clusterMaxZoom,
-      props.content?.requestGeolocation,
+      props.content?.clusterMaxZoom
+    ], () => {
+      nextTick(() => updateMarkers());
+    });
+
+    // Watch geolocation request
+    watch(() => props.content?.requestGeolocation, (newVal) => {
+      if (newVal && !geolocationRequested.value) {
+        requestUserLocation();
+      }
+    });
+
+    // Watch privacy mode changes
+    watch(() => [
       props.content?.showUserLocation,
       props.content?.centerOnUserLocation,
-      props.content?.enablePrivacyMode,
+      props.content?.enablePrivacyMode
+    ], () => {
+      nextTick(() => updatePrivacyMode());
+    });
+
+    // Watch privacy radius changes
+    watch(() => [
       props.content?.privacyRadius,
       props.content?.privacyRadiusMiles,
-      props.content?.privacyUnit,
-      props.content?.allowClickToMark,
+      props.content?.privacyUnit
+    ], () => {
+      nextTick(() => updatePrivacyCircle());
+    });
+
+    // Watch hardiness heatmap changes
+    watch(() => [
       props.content?.showHardinessHeatmap,
       props.content?.hardinessHeatmapRadius,
-      props.content?.userHardinessZone,
-      props.content?.isOnline,
-      props.content?.allowMapTypeSelection,
-      props.content?.useVectorTiles,
-      props.content?.enableReverseGeocoding,
+      props.content?.userHardinessZone
+    ], () => {
+      nextTick(() => updateHardinessHeatmap());
+    });
+
+    // Watch online status changes
+    watch(() => props.content?.isOnline, () => {
+      updateMarkers();
+      if (userLocationMarker.value) {
+        updateUserLocationMarker();
+      }
+    });
+
+    // Watch boundary settings changes
+    watch(() => [
       props.content?.enableCountryHover,
       props.content?.enableStateHover,
-      props.content?.geocodingRateLimit,
       props.content?.countryMinZoom,
       props.content?.countryMaxZoom,
       props.content?.stateMinZoom,
       props.content?.stateMaxZoom
-    ], (newVals, oldVals) => {
-      // Handle specific property changes
-      if (newVals[0] !== oldVals?.[0]) { // mapType changed
-        nextTick(() => updateMapType());
-      }
-      if (newVals[1] !== oldVals?.[1] || newVals[2] !== oldVals?.[2] || newVals[3] !== oldVals?.[3]) { // position/zoom changed
-        nextTick(() => updateMapView());
-      }
-      if (newVals[4] !== oldVals?.[4] || newVals[5] !== oldVals?.[5]) { // clustering changed
-        nextTick(() => updateMarkers());
-      }
-      if (newVals[6] !== oldVals?.[6] && newVals[6] && !geolocationRequested.value) { // requestGeolocation enabled
-        requestUserLocation();
-      }
-      if (newVals[7] !== oldVals?.[7] || newVals[8] !== oldVals?.[8] || newVals[9] !== oldVals?.[9]) { // privacy/location changed
-        nextTick(() => updatePrivacyMode());
-      }
-      if (newVals[10] !== oldVals?.[10] || newVals[11] !== oldVals?.[11] || newVals[12] !== oldVals?.[12]) { // privacy radius changed
-        nextTick(() => updatePrivacyCircle());
-      }
-      if (newVals[14] !== oldVals?.[14] || newVals[15] !== oldVals?.[15] || newVals[16] !== oldVals?.[16]) { // hardiness changed
-        nextTick(() => updateHardinessHeatmap());
-      }
-      if (newVals[17] !== oldVals?.[17]) { // isOnline changed
-        updateMarkers();
-        if (userLocationMarker.value) {
-          updateUserLocationMarker();
-        }
-      }
-      if (newVals[20] !== oldVals?.[20] || newVals[21] !== oldVals?.[21] || newVals[23] !== oldVals?.[23] || newVals[24] !== oldVals?.[24] || newVals[25] !== oldVals?.[25] || newVals[26] !== oldVals?.[26]) { // boundary enable toggles and zoom levels changed
-        nextTick(() => updateBoundaries());
-      }
-    }, { deep: true });
+    ], () => {
+      nextTick(() => updateBoundaries());
+    });
 
     // Watch style properties separately
     watch(() => [
@@ -1537,6 +1572,17 @@ export default {
       if (geocodingDebounceTimer.value) {
         clearTimeout(geocodingDebounceTimer.value);
         geocodingDebounceTimer.value = null;
+      }
+
+      if (boundaryDebounceTimer.value) {
+        clearTimeout(boundaryDebounceTimer.value);
+        boundaryDebounceTimer.value = null;
+      }
+
+      // Cancel pending geocoding requests
+      if (geocodingAbortController.value) {
+        geocodingAbortController.value.abort();
+        geocodingAbortController.value = null;
       }
 
       // Disconnect observers
@@ -1676,6 +1722,14 @@ export default {
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
     position: relative;
 
+    &.online {
+      background: #4CAF50;
+    }
+
+    &.offline {
+      background: #9E9E9E;
+    }
+
     &::after {
       content: '';
       position: absolute;
@@ -1721,6 +1775,14 @@ export default {
     border: 3px solid white;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
     position: relative;
+
+    &.online {
+      background: #4CAF50;
+    }
+
+    &.offline {
+      background: #9E9E9E;
+    }
 
     &::after {
       content: '';
