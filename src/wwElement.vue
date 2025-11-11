@@ -2403,6 +2403,7 @@ export default {
 .openstreet-map {
   position: relative;
   width: 100%;
+  min-height: 400px;
 
   .map-container {
     width: 100%;
