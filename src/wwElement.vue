@@ -67,6 +67,8 @@ export default {
     const hoveredCountry = ref(null);
     const hoveredState = ref(null);
     const geocodingDebounceTimer = ref(null);
+    const lastGeocodingRequest = ref(0); // Track last request time for rate limiting
+    const geocodingQueue = ref([]); // Queue for pending requests
 
     // Component state
     const geolocationRequested = ref(false);
@@ -684,12 +686,23 @@ export default {
       createMultiUserHeatmap(users);
     };
 
-    // Reverse Geocoding
+    // Reverse Geocoding with Rate Limiting
     const reverseGeocode = async (lat, lng) => {
       if (!props.content?.enableReverseGeocoding) return null;
 
+      const rateLimit = props.content?.geocodingRateLimit || 1000;
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastGeocodingRequest.value;
+
+      // Enforce rate limit - wait if necessary
+      if (timeSinceLastRequest < rateLimit) {
+        const waitTime = rateLimit - timeSinceLastRequest;
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+
       try {
-        const rateLimit = props.content?.geocodingRateLimit || 1000;
+        // Update last request time
+        lastGeocodingRequest.value = Date.now();
 
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
@@ -701,7 +714,9 @@ export default {
         );
 
         if (!response.ok) {
-          console.warn('Geocoding request failed:', response.status);
+          if (response.status === 429) {
+            console.error('Nominatim rate limit exceeded - please increase geocodingRateLimit');
+          }
           return null;
         }
 
@@ -753,16 +768,10 @@ export default {
     // Country/State Boundary Rendering
     const loadCountryBoundaries = async () => {
       if (!props.content?.enableCountryHover || !map.value) {
-        console.log('❌ Country boundaries loading skipped:', {
-          enableCountryHover: props.content?.enableCountryHover,
-          mapExists: !!map.value
-        });
         return;
       }
 
       try {
-        console.log('🌍 Loading country boundaries...');
-
         const bounds = map.value.getBounds();
         const zoom = map.value.getZoom();
 
@@ -771,11 +780,6 @@ export default {
         const maxZoom = props.content?.countryMaxZoom ?? 18;
 
         if (zoom < minZoom || zoom > maxZoom) {
-          console.log('❌ Country boundaries skipped - zoom out of range:', {
-            currentZoom: zoom,
-            minZoom,
-            maxZoom
-          });
           // Remove existing layer if present
           if (countryBoundaryLayer.value) {
             map.value.removeLayer(countryBoundaryLayer.value);
@@ -784,18 +788,9 @@ export default {
           return;
         }
 
-        console.log('📍 Map bounds:', {
-          west: bounds.getWest(),
-          south: bounds.getSouth(),
-          east: bounds.getEast(),
-          north: bounds.getNorth(),
-          zoom: zoom
-        });
-
         let boundaries;
 
         if (props.content?.useVectorTiles) {
-          console.log('Using vector tiles for countries');
           await vectorTileClient.init();
           boundaries = await loadCountriesVectorTiles(bounds, zoom);
         } else {
@@ -803,22 +798,17 @@ export default {
           const cached = boundaryCache.get(cacheKey);
 
           if (cached) {
-            console.log('Using cached country boundaries');
             boundaries = cached;
           } else {
-            console.log('Fetching country boundaries from Supabase');
             boundaries = await boundaryAPI.getCountriesInBounds(bounds, zoom);
             boundaryCache.set(cacheKey, boundaries);
           }
         }
 
         if (!boundaries || boundaries.length === 0) {
-          console.warn('⚠️ No country boundaries loaded');
           return;
         }
 
-        console.log('✅ Boundaries loaded, count:', boundaries.length);
-        console.log('📦 Sample boundary:', boundaries[0]);
         renderCountryBoundaries(boundaries);
 
         emit('trigger-event', {
@@ -835,8 +825,6 @@ export default {
       if (!props.content?.enableStateHover || !map.value) return;
 
       try {
-        console.log('Loading state boundaries...');
-
         const bounds = map.value.getBounds();
         const zoom = map.value.getZoom();
 
@@ -845,11 +833,6 @@ export default {
         const maxZoom = props.content?.stateMaxZoom ?? 18;
 
         if (zoom < minZoom || zoom > maxZoom) {
-          console.log('State boundaries skipped - zoom out of range:', {
-            currentZoom: zoom,
-            minZoom,
-            maxZoom
-          });
           // Remove existing layer if present
           if (stateBoundaryLayer.value) {
             map.value.removeLayer(stateBoundaryLayer.value);
@@ -861,7 +844,6 @@ export default {
         let boundaries;
 
         if (props.content?.useVectorTiles) {
-          console.log('Using vector tiles for states');
           await vectorTileClient.init();
           boundaries = await loadStatesVectorTiles(bounds, zoom);
         } else {
@@ -869,17 +851,14 @@ export default {
           const cached = boundaryCache.get(cacheKey);
 
           if (cached) {
-            console.log('Using cached state boundaries');
             boundaries = cached;
           } else {
-            console.log('Fetching state boundaries from Supabase');
             boundaries = await boundaryAPI.getStatesInBounds(bounds, zoom);
             boundaryCache.set(cacheKey, boundaries);
           }
         }
 
         if (!boundaries || boundaries.length === 0) {
-          console.warn('No state boundaries loaded');
           return;
         }
 
@@ -923,7 +902,6 @@ export default {
         }
 
         if (!data || data.length === 0) {
-          console.log('⚠️ No countries found in bounds');
           return [];
         }
 
@@ -933,13 +911,6 @@ export default {
         const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
 
         // Performance metrics
-        console.group('📊 Countries Load Performance');
-        console.log('✅ Features loaded:', data.length);
-        console.log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
-        console.log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
-        console.log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
-        console.log('🎯 Zoom level:', zoom);
-        console.groupEnd();
 
         // Transform to expected format
         return data.map(country => ({
@@ -984,7 +955,6 @@ export default {
         }
 
         if (!data || data.length === 0) {
-          console.log('⚠️ No states found in bounds');
           return [];
         }
 
@@ -994,13 +964,6 @@ export default {
         const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
 
         // Performance metrics
-        console.group('📊 States Load Performance');
-        console.log('✅ Features loaded:', data.length);
-        console.log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
-        console.log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
-        console.log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
-        console.log('🎯 Zoom level:', zoom);
-        console.groupEnd();
 
         // Transform to expected format
         return data.map(state => ({
@@ -1194,14 +1157,12 @@ export default {
     };
 
     const renderCountryBoundaries = (boundaries) => {
-      console.log('🎨 Rendering country boundaries:', boundaries.length);
 
       if (countryBoundaryLayer.value) {
         map.value.removeLayer(countryBoundaryLayer.value);
       }
 
       const geoJsonData = boundaryAPI.toGeoJSON(boundaries);
-      console.log('📄 GeoJSON features:', geoJsonData.features.length);
 
       countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
@@ -1413,19 +1374,20 @@ export default {
 
         setupTileLayers();
         updateMapType();
-
-        map.value.on('click', onMapClick);
-
         setupResizeObserver();
 
+        // Wait for map to be fully ready before attaching event listeners
         map.value.whenReady(async () => {
+          // Attach ALL event listeners inside whenReady to prevent null reference errors
+          map.value.on('click', onMapClick);
+          map.value.on('moveend', updateBoundaries);
+          map.value.on('zoomend', updateBoundaries);
+
+          // Initialize map features after ready
           updateMarkers();
           updatePrivacyMode();
           updateHardinessHeatmap();
           await updateBoundaries();
-
-          map.value.on('moveend', updateBoundaries);
-          map.value.on('zoomend', updateBoundaries);
 
           emit('trigger-event', {
             name: 'map-ready',
@@ -1566,22 +1528,84 @@ export default {
     });
 
     onBeforeUnmount(() => {
-      if (hardinessHeatmapLayer.value) {
-        map.value?.removeLayer(hardinessHeatmapLayer.value);
-        hardinessHeatmapLayer.value = null;
+      // Clear all timers
+      if (resizeTimeout.value) {
+        clearTimeout(resizeTimeout.value);
+        resizeTimeout.value = null;
       }
 
+      if (geocodingDebounceTimer.value) {
+        clearTimeout(geocodingDebounceTimer.value);
+        geocodingDebounceTimer.value = null;
+      }
+
+      // Disconnect observers
       if (resizeObserver.value) {
         resizeObserver.value.disconnect();
         resizeObserver.value = null;
       }
 
-      if (resizeTimeout.value) {
-        clearTimeout(resizeTimeout.value);
-      }
-
+      // Clean up all map layers
       if (map.value) {
+        // Remove all event listeners to prevent memory leaks
+        map.value.off();
+
+        // Remove all layers
+        if (hardinessHeatmapLayer.value) {
+          map.value.removeLayer(hardinessHeatmapLayer.value);
+          hardinessHeatmapLayer.value = null;
+        }
+
+        if (countryBoundaryLayer.value) {
+          map.value.removeLayer(countryBoundaryLayer.value);
+          countryBoundaryLayer.value = null;
+        }
+
+        if (stateBoundaryLayer.value) {
+          map.value.removeLayer(stateBoundaryLayer.value);
+          stateBoundaryLayer.value = null;
+        }
+
+        if (markersLayer.value) {
+          map.value.removeLayer(markersLayer.value);
+          markersLayer.value = null;
+        }
+
+        if (clusterGroup.value) {
+          map.value.removeLayer(clusterGroup.value);
+          clusterGroup.value = null;
+        }
+
+        if (userLocationMarker.value) {
+          userLocationMarker.value.off();
+          map.value.removeLayer(userLocationMarker.value);
+          userLocationMarker.value = null;
+        }
+
+        if (userMarkedLocationMarker.value) {
+          userMarkedLocationMarker.value.off();
+          map.value.removeLayer(userMarkedLocationMarker.value);
+          userMarkedLocationMarker.value = null;
+        }
+
+        if (privacyCircle.value) {
+          map.value.removeLayer(privacyCircle.value);
+          privacyCircle.value = null;
+        }
+
+        // Remove all tile layers
+        if (tileLayers.value) {
+          Object.values(tileLayers.value).forEach(layer => {
+            if (layer && map.value.hasLayer(layer)) {
+              map.value.removeLayer(layer);
+            }
+          });
+          tileLayers.value = {};
+        }
+
+        // Finally remove the map itself
         map.value.remove();
+        map.value = null;
       }
     });
 
