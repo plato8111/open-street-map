@@ -101,6 +101,8 @@ export default {
     const hardinessHeatmapLayer = ref(null);
     const countryBoundaryLayer = ref(null);
     const stateBoundaryLayer = ref(null);
+    const countryLayerIndex = ref(new Map()); // O(1) lookup: id -> layer
+    const stateLayerIndex = ref(new Map()); // O(1) lookup: id -> layer
     const selectedLocationMarkers = ref(null); // Layer group for selected location markers
     const selectedCountries = ref(new Set());
     const selectedStates = ref(new Set());
@@ -428,32 +430,15 @@ export default {
 
     // Helper: Update internal variables with current selections
     const updateSelectionVariables = () => {
+      // O(n) lookup using Map index instead of O(n²) eachLayer iteration
       setSelectedCountriesData(Array.from(selectedCountries.value).map(id => {
-        let countryData = null;
-
-        if (countryBoundaryLayer.value) {
-          countryBoundaryLayer.value.eachLayer(layer => {
-            if (layer.feature?.properties?.id === id) {
-              countryData = layer.feature.properties;
-            }
-          });
-        }
-
-        return countryData;
+        const layer = countryLayerIndex.value.get(id);
+        return layer?.feature?.properties || null;
       }).filter(Boolean));
 
       setSelectedStatesData(Array.from(selectedStates.value).map(id => {
-        let stateData = null;
-
-        if (stateBoundaryLayer.value) {
-          stateBoundaryLayer.value.eachLayer(layer => {
-            if (layer.feature?.properties?.id === id) {
-              stateData = layer.feature.properties;
-            }
-          });
-        }
-
-        return stateData;
+        const layer = stateLayerIndex.value.get(id);
+        return layer?.feature?.properties || null;
       }).filter(Boolean));
 
       setSelectedLocationsData(selectedLocations.value);
@@ -1928,6 +1913,16 @@ export default {
           });
         }
       }).addTo(map.value);
+
+      // Build O(1) lookup index: id -> layer
+      countryLayerIndex.value.clear();
+      countryBoundaryLayer.value.eachLayer(layer => {
+        const id = layer.feature?.properties?.id;
+        if (id) {
+          countryLayerIndex.value.set(id, layer);
+        }
+      });
+      log('📇 Country layer index built:', countryLayerIndex.value.size, 'entries');
     };
 
     const renderStateBoundaries = (boundaries) => {
@@ -1970,6 +1965,16 @@ export default {
           });
         }
       }).addTo(map.value);
+
+      // Build O(1) lookup index: id -> layer
+      stateLayerIndex.value.clear();
+      stateBoundaryLayer.value.eachLayer(layer => {
+        const id = layer.feature?.properties?.id;
+        if (id) {
+          stateLayerIndex.value.set(id, layer);
+        }
+      });
+      log('📇 State layer index built:', stateLayerIndex.value.size, 'entries');
     };
 
     const updateBoundaries = async () => {
@@ -1980,6 +1985,7 @@ export default {
       } else if (countryBoundaryLayer.value) {
         map.value.removeLayer(countryBoundaryLayer.value);
         countryBoundaryLayer.value = null;
+        countryLayerIndex.value.clear();
       }
 
       if (props.content?.enableStateHover) {
@@ -1987,6 +1993,7 @@ export default {
       } else if (stateBoundaryLayer.value) {
         map.value.removeLayer(stateBoundaryLayer.value);
         stateBoundaryLayer.value = null;
+        stateLayerIndex.value.clear();
       }
     };
 
@@ -2377,6 +2384,15 @@ export default {
       if (hardinessHeatmapLayer.value) {
         map.value?.removeLayer(hardinessHeatmapLayer.value);
         hardinessHeatmapLayer.value = null;
+      }
+
+      // Clear layer indexes
+      if (countryLayerIndex.value) {
+        countryLayerIndex.value.clear();
+      }
+
+      if (stateLayerIndex.value) {
+        stateLayerIndex.value.clear();
       }
 
       // Remove markers
