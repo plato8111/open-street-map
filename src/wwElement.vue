@@ -2080,6 +2080,12 @@ export default {
         updateMapType();
         setupResizeObserver();
 
+        // Add null check before calling whenReady()
+        if (!map.value) {
+          console.error('❌ Map instance is null after creation');
+          return;
+        }
+
         map.value.whenReady(async () => {
           if (!map.value) return; // Safety check
 
@@ -2091,21 +2097,19 @@ export default {
           // Initialize location context
           updateLocationContext();
 
-          // Attach event listeners only after map is ready
-          if (map.value) {
-            map.value.on('click', onMapClick);
-            map.value.on('moveend', updateBoundaries);
-            map.value.on('zoomend', () => {
-              updateBoundaries();
-              updateLocationContext();
-              setCurrentZoomLevel(map.value.getZoom());
-            });
+          // Attach ALL event listeners inside whenReady()
+          map.value.on('click', onMapClick);
+          map.value.on('moveend', updateBoundaries);
+          map.value.on('zoomend', () => {
+            updateBoundaries();
+            updateLocationContext();
+            setCurrentZoomLevel(map.value.getZoom());
+          });
 
-            // Track zoom changes
-            map.value.on('zoom', () => {
-              setCurrentZoomLevel(map.value.getZoom());
-            });
-          }
+          // Track zoom changes
+          map.value.on('zoom', () => {
+            setCurrentZoomLevel(map.value.getZoom());
+          });
 
           emit('trigger-event', {
             name: 'map-ready',
