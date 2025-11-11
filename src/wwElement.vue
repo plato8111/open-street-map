@@ -16,23 +16,30 @@
 </template>
 
 <script>
-import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+console.log('📦 Loading Leaflet dependencies...');
 import L from 'leaflet';
+console.log('✅ Leaflet loaded:', typeof L);
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
+console.log('✅ Leaflet MarkerCluster loaded');
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.heat';
+console.log('✅ Leaflet Heat loaded');
 import { boundaryAPI, boundaryCache, getSupabaseClient } from './supabaseClient.js';
+console.log('✅ Supabase client loaded');
 import { vectorTileClient } from './vectorTileClient.js';
+console.log('✅ Vector tile client loaded');
 
 // Fix Leaflet's default marker icon issue
+console.log('🔧 Fixing Leaflet marker icons...');
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
 });
+console.log('✅ Leaflet marker icons fixed');
 
 export default {
   name: 'OpenStreetMap',
@@ -43,23 +50,27 @@ export default {
     wwEditorState: { type: Object, required: true },
     /* wwEditor:end */
   },
-  emits: ['trigger-event'],
-  setup(props, { emit }) {
+  data() {
     // CRITICAL: Ensure wwLib is available as global, with fallback
+    console.log('🔍 OpenStreetMap: Checking wwLib availability...');
+    console.log('typeof wwLib:', typeof wwLib);
+    console.log('wwLib exists:', !!wwLib);
+    console.log('wwLib.wwVariable exists:', !!(wwLib && wwLib.wwVariable));
+    console.log('wwLib.wwVariable.useComponentVariable type:', typeof (wwLib && wwLib.wwVariable && wwLib.wwVariable.useComponentVariable));
+
     const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
+
+    if (!hasWwLib) {
+      console.warn('⚠️ OpenStreetMap: wwLib not fully available - component will use fallback mode');
+      console.warn('Available global objects:', Object.keys(window || global || {}));
+    } else {
+      console.log('✅ OpenStreetMap: wwLib is fully available');
+    }
 
     // Editor state
     /* wwEditor:start */
     const isEditing = computed(() => props.wwEditorState?.isEditing);
     /* wwEditor:end */
-
-    // Security: Sanitize color inputs to prevent XSS
-    const sanitizeColor = (color) => {
-      if (!color || typeof color !== 'string') return '#FF5722';
-      // Only allow valid hex colors (#RGB or #RRGGBB format)
-      const hexPattern = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
-      return hexPattern.test(color) ? color : '#FF5722';
-    };
 
     // Non-reactive state (map instances)
     const map = ref(null);
@@ -74,8 +85,6 @@ export default {
     const hardinessHeatmapLayer = ref(null);
     const countryBoundaryLayer = ref(null);
     const stateBoundaryLayer = ref(null);
-    const countryLayerIndex = ref(new Map()); // O(1) lookup: id -> layer
-    const stateLayerIndex = ref(new Map()); // O(1) lookup: id -> layer
     const selectedLocationMarkers = ref(null); // Layer group for selected location markers
     const selectedCountries = ref(new Set());
     const selectedStates = ref(new Set());
@@ -85,10 +94,6 @@ export default {
     const hoveredCountry = ref(null);
     const hoveredState = ref(null);
     const geocodingDebounceTimer = ref(null);
-    const geocodeAbortController = ref(null);
-    const debounceTimer = ref(null);
-    const countriesLayer = ref(null);
-    const statesLayer = ref(null);
 
     // Component state
     const geolocationRequested = ref(false);
@@ -101,6 +106,7 @@ export default {
     const mapContainer = ref(null);
 
     // Internal variables for NoCode users
+    console.log('🔧 Setting up component variables...');
     const { value: selectedLocation, setValue: setSelectedLocation } = hasWwLib
       ? wwLib.wwVariable.useComponentVariable({
           uid: props.uid,
@@ -109,6 +115,7 @@ export default {
           defaultValue: null,
         })
       : { value: ref(null), setValue: () => {} };
+    console.log('selectedLocation variable setup:', { hasWwLib, value: selectedLocation.value });
 
     const { value: userLocation, setValue: setUserLocation } = hasWwLib
       ? wwLib.wwVariable.useComponentVariable({
@@ -276,19 +283,6 @@ export default {
       );
     });
 
-    // Computed property for selected locations data - automatically reactive
-    const processedSelectedLocations = computed(() => {
-      return selectedLocations.value.map(location => ({
-        ...location,
-        properties: location?.feature?.properties || null
-      })).filter(Boolean);
-    });
-
-    // Computed property for current zoom - automatically reactive
-    const computedCurrentZoomLevel = computed(() => {
-      return map.value?.getZoom?.() || 13;
-    });
-
     const processedUsersHardinessData = computed(() => {
       const users = props.content?.usersHardinessData || [];
       if (!Array.isArray(users)) return [];
@@ -417,15 +411,32 @@ export default {
 
     // Helper: Update internal variables with current selections
     const updateSelectionVariables = () => {
-      // O(n) lookup using Map index instead of O(n²) eachLayer iteration
       setSelectedCountriesData(Array.from(selectedCountries.value).map(id => {
-        const layer = countryLayerIndex.value.get(id);
-        return layer?.feature?.properties || null;
+        let countryData = null;
+
+        if (countryBoundaryLayer.value) {
+          countryBoundaryLayer.value.eachLayer(layer => {
+            if (layer.feature?.properties?.id === id) {
+              countryData = layer.feature.properties;
+            }
+          });
+        }
+
+        return countryData;
       }).filter(Boolean));
 
       setSelectedStatesData(Array.from(selectedStates.value).map(id => {
-        const layer = stateLayerIndex.value.get(id);
-        return layer?.feature?.properties || null;
+        let stateData = null;
+
+        if (stateBoundaryLayer.value) {
+          stateBoundaryLayer.value.eachLayer(layer => {
+            if (layer.feature?.properties?.id === id) {
+              stateData = layer.feature.properties;
+            }
+          });
+        }
+
+        return stateData;
       }).filter(Boolean));
 
       setSelectedLocationsData(selectedLocations.value);
@@ -433,24 +444,19 @@ export default {
 
     // Helper: Update selected location markers on map
     const updateSelectedLocationMarkers = () => {
-      if (!map.value || !map.value.removeLayer) return;
+      if (!map.value) return;
 
-      try {
-        // Remove existing layer group
-        if (selectedLocationMarkers.value) {
-          map.value.removeLayer(selectedLocationMarkers.value);
-        }
-
-        // Create new layer group for selected locations
-        selectedLocationMarkers.value = L.layerGroup();
-      } catch (error) {
-        console.error('[Markers] Failed to update location markers:', error);
-        return;
+      // Remove existing layer group
+      if (selectedLocationMarkers.value) {
+        map.value.removeLayer(selectedLocationMarkers.value);
       }
+
+      // Create new layer group for selected locations
+      selectedLocationMarkers.value = L.layerGroup();
 
       // Add marker for each selected location
       selectedLocations.value.forEach(location => {
-        const markerColor = sanitizeColor(props.content?.selectedLocationMarkerColor || '#FF5722');
+        const markerColor = props.content?.selectedLocationMarkerColor || '#FF5722';
         const marker = L.marker([location.lat, location.lng], {
           icon: L.divIcon({
             className: 'selected-location-marker',
@@ -593,12 +599,12 @@ export default {
       try {
         map.value.invalidateSize();
       } catch (error) {
-        console.error('[Map] Failed to invalidate size:', error);
+        // Silent fail - map size invalidation not critical
       }
     };
 
     const setupResizeObserver = () => {
-      const frontWindow = wwLib?.getFrontWindow?.() || null;
+      const frontWindow = (wwLib?.getFrontWindow && wwLib.getFrontWindow()) || (typeof window !== 'undefined' ? window : null);
       if (!mapContainer.value || !frontWindow || !frontWindow.ResizeObserver) return;
 
       resizeObserver.value = new frontWindow.ResizeObserver(() => {
@@ -629,17 +635,13 @@ export default {
     };
 
     const updateMapView = () => {
-      if (!map.value || !map.value.setView) return;
+      if (!map.value) return;
 
       const lat = props.content?.initialLat || 51.505;
       const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
-      try {
-        map.value.setView([lat, lng], zoom);
-      } catch (error) {
-        console.error('[Map] Failed to set view:', error);
-      }
+      map.value.setView([lat, lng], zoom);
     };
 
     const updateMarkers = () => {
@@ -714,7 +716,7 @@ export default {
           map.value.addLayer(markersLayer.value);
         }
       } catch (error) {
-        console.error('[Markers] Failed to update user markers:', error);
+        // Silent fail - marker update errors handled gracefully
       }
     };
 
@@ -732,7 +734,7 @@ export default {
 
         userLocationMarker.value.setIcon(newIcon);
       } catch (error) {
-        console.error('[Marker] Failed to update user location marker icon:', error);
+        // Silent fail - marker icon update not critical
       }
     };
 
@@ -890,7 +892,7 @@ export default {
           debouncedReverseGeocode(latitude, longitude, 'user-location-geocoded');
         }
       } catch (error) {
-        console.error('[Location] Failed to set user location marker:', error);
+        // Silent fail - user location marker not critical
       }
     };
 
@@ -903,7 +905,7 @@ export default {
     };
 
     const requestUserLocation = () => {
-      const frontWindow = wwLib?.getFrontWindow?.() || null;
+      const frontWindow = (wwLib?.getFrontWindow && wwLib.getFrontWindow()) || (typeof window !== 'undefined' ? window : null);
       if (!frontWindow || !frontWindow.navigator?.geolocation) return;
 
       geolocationRequested.value = true;
@@ -968,12 +970,11 @@ export default {
     };
 
     const onMapClick = async (e) => {
-      if (!map.value || !map.value.getZoom) return;
+      if (!map.value) return;
 
-      try {
-        const { lat, lng } = e.latlng;
-        const zoom = map.value.getZoom();
-        const threshold = props.content?.locationZoomThreshold || 8;
+      const { lat, lng } = e.latlng;
+      const zoom = map.value.getZoom();
+      const threshold = props.content?.locationZoomThreshold || 8;
 
       // Detect geographic location (country/state) from clicked coordinates with zoom awareness
       const detected = await detectGeographicLocation(lat, lng, zoom);
@@ -1103,27 +1104,17 @@ export default {
           debouncedReverseGeocode(lat, lng, 'marked-location-geocoded');
         }
       } catch (error) {
-        console.error('[Location] Failed to set marked location marker:', error);
-      }
-      } catch (error) {
-        console.error('[Map] Click handler error:', error);
+        // Silent fail - marked location marker not critical
       }
     };
 
     const updateHardinessHeatmap = () => {
-      if (!map.value || !map.value.removeLayer) return;
-
       if (hardinessHeatmapLayer.value) {
-        try {
-          map.value.removeLayer(hardinessHeatmapLayer.value);
-          hardinessHeatmapLayer.value = null;
-        } catch (error) {
-          console.error('[Heatmap] Failed to remove heatmap layer:', error);
-          hardinessHeatmapLayer.value = null;
-        }
+        map.value.removeLayer(hardinessHeatmapLayer.value);
+        hardinessHeatmapLayer.value = null;
       }
 
-      if (!props.content?.showHardinessHeatmap) {
+      if (!props.content?.showHardinessHeatmap || !map.value) {
         return;
       }
 
@@ -1139,28 +1130,20 @@ export default {
     const reverseGeocode = async (lat, lng) => {
       if (!props.content?.enableReverseGeocoding) return null;
 
-      // Cancel previous request to prevent API spam
-      if (geocodeAbortController.value) {
-        geocodeAbortController.value.abort();
-      }
-
       try {
         const rateLimit = props.content?.geocodingRateLimit || 1000;
-
-        // Create new AbortController for this request
-        geocodeAbortController.value = new AbortController();
 
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
           {
             headers: {
               'User-Agent': 'WeWebOpenStreetMapComponent/1.0'
-            },
-            signal: geocodeAbortController.value.signal
+            }
           }
         );
 
         if (!response.ok) {
+          console.warn('Geocoding request failed:', response.status);
           return null;
         }
 
@@ -1184,10 +1167,6 @@ export default {
 
         return geocoded;
       } catch (error) {
-        // Don't log errors for intentionally aborted requests
-        if (error.name === 'AbortError') {
-          return null;
-        }
         console.error('Reverse geocoding error:', error);
         return null;
       }
@@ -1235,7 +1214,7 @@ export default {
           });
 
         if (countryError) {
-          // Error occurred
+          console.warn('Country detection error:', countryError);
         }
 
         if (countryData && countryData.length > 0) {
@@ -1250,6 +1229,8 @@ export default {
           selectedCountry.value = detectedCountry;
           setSelectedCountryData(detectedCountry);
 
+          console.log('✅ Detected country:', detectedCountry.name, 'at zoom:', currentZoom);
+
           // Only detect state if zoom >= stateMinZoom
           if (currentZoom >= stateMinZoom) {
             const { data: stateData, error: stateError } = await supabase
@@ -1261,7 +1242,7 @@ export default {
               });
 
             if (stateError) {
-              // Error occurred
+              console.warn('State detection error:', stateError);
             }
 
             if (stateData && stateData.length > 0) {
@@ -1276,11 +1257,14 @@ export default {
               // Update selected state data
               selectedState.value = detectedState;
               setSelectedStateData(detectedState);
+
+              console.log('✅ Detected state:', detectedState.name, 'at zoom:', currentZoom);
             }
           } else {
             // Clear state data when zoom is below state threshold
             selectedState.value = null;
             setSelectedStateData(null);
+            console.log('🔍 Zoom too low for state detection (zoom:', currentZoom, '< min:', stateMinZoom + ')');
           }
         }
 
@@ -1301,16 +1285,23 @@ export default {
     // Country/State Boundary Rendering
     const loadCountryBoundaries = async () => {
       if (!props.content?.enableCountryHover || !map.value) {
+        console.log('❌ Country boundaries loading skipped:', {
+          enableCountryHover: props.content?.enableCountryHover,
+          mapExists: !!map.value
+        });
         return;
       }
 
       // Check if Supabase is available
       const supabase = getSupabaseClient();
       if (!supabase) {
+        console.warn('⚠️ Country boundaries disabled: Supabase not configured');
         return;
       }
 
       try {
+        console.log('🌍 Loading country boundaries...');
+
         const bounds = map.value.getBounds();
         const zoom = map.value.getZoom();
 
@@ -1319,6 +1310,11 @@ export default {
         const maxZoom = props.content?.countryMaxZoom ?? 18;
 
         if (zoom < minZoom || zoom > maxZoom) {
+          console.log('❌ Country boundaries skipped - zoom out of range:', {
+            currentZoom: zoom,
+            minZoom,
+            maxZoom
+          });
           // Remove existing layer if present
           if (countryBoundaryLayer.value) {
             map.value.removeLayer(countryBoundaryLayer.value);
@@ -1327,9 +1323,18 @@ export default {
           return;
         }
 
+        console.log('📍 Map bounds:', {
+          west: bounds.getWest(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          north: bounds.getNorth(),
+          zoom: zoom
+        });
+
         let boundaries;
 
         if (props.content?.useVectorTiles) {
+          console.log('Using vector tiles for countries');
           await vectorTileClient.init();
           boundaries = await loadCountriesVectorTiles(bounds, zoom);
         } else {
@@ -1337,17 +1342,22 @@ export default {
           const cached = boundaryCache.get(cacheKey);
 
           if (cached) {
+            console.log('Using cached country boundaries');
             boundaries = cached;
           } else {
+            console.log('Fetching country boundaries from Supabase');
             boundaries = await boundaryAPI.getCountriesInBounds(bounds, zoom);
             boundaryCache.set(cacheKey, boundaries);
           }
         }
 
         if (!boundaries || boundaries.length === 0) {
+          console.warn('⚠️ No country boundaries loaded');
           return;
         }
 
+        console.log('✅ Boundaries loaded, count:', boundaries.length);
+        console.log('📦 Sample boundary:', boundaries[0]);
         renderCountryBoundaries(boundaries);
 
         emit('trigger-event', {
@@ -1366,10 +1376,12 @@ export default {
       // Check if Supabase is available
       const supabase = getSupabaseClient();
       if (!supabase) {
+        console.warn('⚠️ State boundaries disabled: Supabase not configured');
         return;
       }
 
       try {
+        console.log('Loading state boundaries...');
 
         const bounds = map.value.getBounds();
         const zoom = map.value.getZoom();
@@ -1379,6 +1391,11 @@ export default {
         const maxZoom = props.content?.stateMaxZoom ?? 18;
 
         if (zoom < minZoom || zoom > maxZoom) {
+          console.log('State boundaries skipped - zoom out of range:', {
+            currentZoom: zoom,
+            minZoom,
+            maxZoom
+          });
           // Remove existing layer if present
           if (stateBoundaryLayer.value) {
             map.value.removeLayer(stateBoundaryLayer.value);
@@ -1390,6 +1407,7 @@ export default {
         let boundaries;
 
         if (props.content?.useVectorTiles) {
+          console.log('Using vector tiles for states');
           await vectorTileClient.init();
           boundaries = await loadStatesVectorTiles(bounds, zoom);
         } else {
@@ -1397,14 +1415,17 @@ export default {
           const cached = boundaryCache.get(cacheKey);
 
           if (cached) {
+            console.log('Using cached state boundaries');
             boundaries = cached;
           } else {
+            console.log('Fetching state boundaries from Supabase');
             boundaries = await boundaryAPI.getStatesInBounds(bounds, zoom);
             boundaryCache.set(cacheKey, boundaries);
           }
         }
 
         if (!boundaries || boundaries.length === 0) {
+          console.warn('No state boundaries loaded');
           return;
         }
 
@@ -1449,8 +1470,23 @@ export default {
         }
 
         if (!data || data.length === 0) {
+          console.log('⚠️ No countries found in bounds');
           return [];
         }
+
+        // Calculate data size
+        const dataSize = new Blob([JSON.stringify(data)]).size;
+        const dataSizeKB = (dataSize / 1024).toFixed(2);
+        const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
+
+        // Performance metrics
+        console.group('📊 Countries Load Performance');
+        console.log('✅ Features loaded:', data.length);
+        console.log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
+        console.log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
+        console.log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
+        console.log('🎯 Zoom level:', zoom);
+        console.groupEnd();
 
         // Transform to expected format
         return data.map(country => ({
@@ -1496,8 +1532,23 @@ export default {
         }
 
         if (!data || data.length === 0) {
+          console.log('⚠️ No states found in bounds');
           return [];
         }
+
+        // Calculate data size
+        const dataSize = new Blob([JSON.stringify(data)]).size;
+        const dataSizeKB = (dataSize / 1024).toFixed(2);
+        const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
+
+        // Performance metrics
+        console.group('📊 States Load Performance');
+        console.log('✅ Features loaded:', data.length);
+        console.log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
+        console.log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
+        console.log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
+        console.log('🎯 Zoom level:', zoom);
+        console.groupEnd();
 
         // Transform to expected format
         return data.map(state => ({
@@ -1805,11 +1856,14 @@ export default {
     };
 
     const renderCountryBoundaries = (boundaries) => {
+      console.log('🎨 Rendering country boundaries:', boundaries.length);
+
       if (countryBoundaryLayer.value) {
         map.value.removeLayer(countryBoundaryLayer.value);
       }
 
       const geoJsonData = boundaryAPI.toGeoJSON(boundaries);
+      console.log('📄 GeoJSON features:', geoJsonData.features.length);
 
       countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
@@ -1844,15 +1898,6 @@ export default {
           });
         }
       }).addTo(map.value);
-
-      // Build O(1) lookup index: id -> layer
-      countryLayerIndex.value.clear();
-      countryBoundaryLayer.value.eachLayer(layer => {
-        const id = layer.feature?.properties?.id;
-        if (id) {
-          countryLayerIndex.value.set(id, layer);
-        }
-      });
     };
 
     const renderStateBoundaries = (boundaries) => {
@@ -1895,15 +1940,6 @@ export default {
           });
         }
       }).addTo(map.value);
-
-      // Build O(1) lookup index: id -> layer
-      stateLayerIndex.value.clear();
-      stateBoundaryLayer.value.eachLayer(layer => {
-        const id = layer.feature?.properties?.id;
-        if (id) {
-          stateLayerIndex.value.set(id, layer);
-        }
-      });
     };
 
     const updateBoundaries = async () => {
@@ -1914,7 +1950,6 @@ export default {
       } else if (countryBoundaryLayer.value) {
         map.value.removeLayer(countryBoundaryLayer.value);
         countryBoundaryLayer.value = null;
-        countryLayerIndex.value.clear();
       }
 
       if (props.content?.enableStateHover) {
@@ -1922,7 +1957,6 @@ export default {
       } else if (stateBoundaryLayer.value) {
         map.value.removeLayer(stateBoundaryLayer.value);
         stateBoundaryLayer.value = null;
-        stateLayerIndex.value.clear();
       }
     };
 
@@ -2025,8 +2059,11 @@ export default {
       const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
+      console.log('Map config:', { lat, lng, zoom, content: props.content });
+
       try {
         if (map.value) {
+          console.log('Removing existing map instance');
           map.value.remove();
           map.value = null;
         }
@@ -2036,6 +2073,7 @@ export default {
         const allowInteraction = !isEditing.value;
         /* wwEditor:end */
 
+        console.log('Creating Leaflet map instance...');
         map.value = L.map(mapContainer.value, {
           /* wwEditor:start */
           dragging: allowInteraction,
@@ -2055,11 +2093,7 @@ export default {
           tap: true,
           trackResize: true
         }).setView([lat, lng], zoom);
-
-        if (!map.value) {
-          console.error('❌ Map creation failed - L.map returned null');
-          return;
-        }
+        console.log('✅ Map instance created successfully');
 
         /* wwEditor:start */
         // Ensure dragging follows editor state
@@ -2078,17 +2112,14 @@ export default {
 
         setupTileLayers();
         updateMapType();
+
+        map.value.on('click', onMapClick);
+
         setupResizeObserver();
 
-        // Add null check before calling whenReady()
-        if (!map.value) {
-          console.error('❌ Map instance is null after creation');
-          return;
-        }
-
+        console.log('Setting up map ready callback...');
         map.value.whenReady(async () => {
-          if (!map.value) return; // Safety check
-
+          console.log('🗺️ Map is ready, initializing features...');
           updateMarkers();
           updatePrivacyMode();
           updateHardinessHeatmap();
@@ -2097,8 +2128,6 @@ export default {
           // Initialize location context
           updateLocationContext();
 
-          // Attach ALL event listeners inside whenReady()
-          map.value.on('click', onMapClick);
           map.value.on('moveend', updateBoundaries);
           map.value.on('zoomend', () => {
             updateBoundaries();
@@ -2111,6 +2140,7 @@ export default {
             setCurrentZoomLevel(map.value.getZoom());
           });
 
+          console.log('✅ Map fully initialized and ready');
           emit('trigger-event', {
             name: 'map-ready',
             event: {}
@@ -2250,36 +2280,15 @@ export default {
       nextTick(() => updateHardinessHeatmap());
     }, { deep: true });
 
-    // Sync computed properties to internal variables for WeWeb editor
-    watch(processedSelectedLocations, (newLocations) => {
-      if (newLocations.length !== selectedLocationsData.value.length) {
-        setSelectedLocationsData(newLocations);
-      }
-    }, { deep: true });
-
-    watch(computedCurrentZoomLevel, (newZoom) => {
-      if (newZoom !== currentZoomLevel.value) {
-        setCurrentZoomLevel(newZoom);
-      }
-    });
-
-    watch(locationContext, (newContext) => {
-      // Keep internal variable in sync when location context changes
-      if (JSON.stringify(newContext) !== JSON.stringify(locationContext.value)) {
-        // Internal variable is already updated via setValue(), no need to re-sync
-      }
-    }, { deep: true });
-
     // Lifecycle
     onMounted(() => {
+      console.log('🎯 OpenStreetMap component mounted');
       nextTick(() => {
+        console.log('🔄 Next tick - initializing component...');
         try {
-          if (!mapContainer.value) {
-            console.error('❌ Map container ref not available');
-            return;
-          }
           initializeMap();
           if (props.content?.requestGeolocation) {
+            console.log('Requesting user location...');
             requestUserLocation();
           }
 
@@ -2299,88 +2308,22 @@ export default {
     });
 
     onBeforeUnmount(() => {
-      // Abort any pending geocoding requests
-      if (geocodeAbortController.value) {
-        geocodeAbortController.value.abort();
-        geocodeAbortController.value = null;
-      }
-
-      // Clear debounce timers
-      if (debounceTimer.value) {
-        clearTimeout(debounceTimer.value);
-        debounceTimer.value = null;
-      }
-
-      // Remove map event listeners
-      if (map.value) {
-        map.value.off('click', onMapClick);
-        map.value.off('moveend', updateBoundaries);
-        map.value.off('zoomend');
-        map.value.off('zoom');
-      }
-
-      // Remove layers
-      if (countriesLayer.value) {
-        map.value?.removeLayer(countriesLayer.value);
-        countriesLayer.value = null;
-      }
-
-      if (statesLayer.value) {
-        map.value?.removeLayer(statesLayer.value);
-        statesLayer.value = null;
-      }
-
-      if (markersLayer.value) {
-        map.value?.removeLayer(markersLayer.value);
-        markersLayer.value = null;
-      }
-
       if (hardinessHeatmapLayer.value) {
         map.value?.removeLayer(hardinessHeatmapLayer.value);
         hardinessHeatmapLayer.value = null;
       }
 
-      // Clear layer indexes
-      if (countryLayerIndex.value) {
-        countryLayerIndex.value.clear();
-      }
-
-      if (stateLayerIndex.value) {
-        stateLayerIndex.value.clear();
-      }
-
-      // Remove markers
-      if (userLocationMarker.value) {
-        userLocationMarker.value.remove();
-        userLocationMarker.value = null;
-      }
-
-      if (userMarkedLocationMarker.value) {
-        userMarkedLocationMarker.value.remove();
-        userMarkedLocationMarker.value = null;
-      }
-
-      if (privacyCircle.value) {
-        privacyCircle.value.remove();
-        privacyCircle.value = null;
-      }
-
-      // Disconnect resize observer
       if (resizeObserver.value) {
         resizeObserver.value.disconnect();
         resizeObserver.value = null;
       }
 
-      // Clear timeouts
       if (resizeTimeout.value) {
         clearTimeout(resizeTimeout.value);
-        resizeTimeout.value = null;
       }
 
-      // Remove map last (this also cleans up remaining listeners/layers)
       if (map.value) {
         map.value.remove();
-        map.value = null;
       }
     });
 
@@ -2407,7 +2350,6 @@ export default {
 .openstreet-map {
   position: relative;
   width: 100%;
-  min-height: 400px;
 
   .map-container {
     width: 100%;
