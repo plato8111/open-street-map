@@ -1,6 +1,9 @@
 // WeWeb Supabase Plugin Integration
 // Access Supabase through WeWeb's plugin system
 
+// Debug flag - set to false for production
+const DEBUG = false;
+
 /**
  * Debug function to help identify available Supabase access points
  */
@@ -82,7 +85,7 @@ function debugSupabaseAccess() {
 function getSupabaseClient() {
   try {
     // Debug mode for development - only run once
-    if (typeof console !== 'undefined' && !getSupabaseClient._debugRun) {
+    if (DEBUG && typeof console !== 'undefined' && !getSupabaseClient._debugRun) {
       debugSupabaseAccess();
       getSupabaseClient._debugRun = true;
     }
@@ -204,39 +207,6 @@ function getSupabaseClient() {
   } catch (error) {
     console.error('Error accessing Supabase client:', error);
     return null; // Return null instead of throwing error
-  }
-}
-
-/**
- * Test Supabase connection with GIS schema
- */
-export async function testSupabaseConnection() {
-  try {
-    console.group('🧪 Testing Supabase GIS Connection');
-
-    const supabase = getSupabaseClient();
-    console.log('Supabase client obtained:', !!supabase);
-
-    // Test direct table access to gis.countries
-    const { data, error } = await supabase
-      .schema('gis')
-      .from('countries')
-      .select('id, name')
-      .limit(1);
-
-    if (error) {
-      console.error('GIS schema access failed:', error);
-      return { success: false, error: error.message };
-    }
-
-    console.log('✅ GIS schema access successful');
-    return { success: true, dataCount: data?.length || 0 };
-
-  } catch (error) {
-    console.error('❌ Supabase GIS connection test failed:', error);
-    return { success: false, error: error.message };
-  } finally {
-    console.groupEnd();
   }
 }
 
@@ -501,9 +471,10 @@ export const boundaryAPI = {
  * Cache for boundary data to improve performance
  */
 export class BoundaryCache {
-  constructor(maxAge = 5 * 60 * 1000) { // 5 minutes default
+  constructor(maxAge = 5 * 60 * 1000, maxSize = 100) { // 5 minutes default, 100 entries max
     this.cache = new Map();
     this.maxAge = maxAge;
+    this.maxSize = maxSize;
   }
 
   generateKey(type, bounds, zoomLevel, extra = '') {
@@ -524,6 +495,12 @@ export class BoundaryCache {
   }
 
   set(key, data) {
+    // Evict oldest entry if cache is at capacity
+    if (this.cache.size >= this.maxSize) {
+      const firstKey = this.cache.keys().next().value;
+      this.cache.delete(firstKey);
+    }
+
     this.cache.set(key, {
       data,
       timestamp: Date.now()
