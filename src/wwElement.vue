@@ -72,6 +72,14 @@ export default {
     const isEditing = computed(() => props.wwEditorState?.isEditing);
     /* wwEditor:end */
 
+    // Security: Sanitize color inputs to prevent XSS
+    const sanitizeColor = (color) => {
+      if (!color || typeof color !== 'string') return '#FF5722';
+      // Only allow valid hex colors (#RGB or #RRGGBB format)
+      const hexPattern = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
+      return hexPattern.test(color) ? color : '#FF5722';
+    };
+
     // Non-reactive state (map instances)
     const map = ref(null);
     const markersLayer = ref(null);
@@ -456,7 +464,7 @@ export default {
 
       // Add marker for each selected location
       selectedLocations.value.forEach(location => {
-        const markerColor = props.content?.selectedLocationMarkerColor || '#FF5722';
+        const markerColor = sanitizeColor(props.content?.selectedLocationMarkerColor || '#FF5722');
         const marker = L.marker([location.lat, location.lng], {
           icon: L.divIcon({
             className: 'selected-location-marker',
