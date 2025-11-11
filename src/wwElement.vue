@@ -16,6 +16,7 @@
 </template>
 
 <script>
+import { computed, ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
@@ -42,7 +43,7 @@ export default {
     wwEditorState: { type: Object, required: true },
     /* wwEditor:end */
   },
-  data() {
+  setup(props, { emit }) {
     // CRITICAL: Ensure wwLib is available as global, with fallback
     const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
 
@@ -84,6 +85,9 @@ export default {
     const hoveredState = ref(null);
     const geocodingDebounceTimer = ref(null);
     const geocodeAbortController = ref(null);
+    const debounceTimer = ref(null);
+    const countriesLayer = ref(null);
+    const statesLayer = ref(null);
 
     // Component state
     const geolocationRequested = ref(false);
@@ -415,15 +419,20 @@ export default {
 
     // Helper: Update selected location markers on map
     const updateSelectedLocationMarkers = () => {
-      if (!map.value) return;
+      if (!map.value || !map.value.removeLayer) return;
 
-      // Remove existing layer group
-      if (selectedLocationMarkers.value) {
-        map.value.removeLayer(selectedLocationMarkers.value);
+      try {
+        // Remove existing layer group
+        if (selectedLocationMarkers.value) {
+          map.value.removeLayer(selectedLocationMarkers.value);
+        }
+
+        // Create new layer group for selected locations
+        selectedLocationMarkers.value = L.layerGroup();
+      } catch (error) {
+        console.error('[Markers] Failed to update location markers:', error);
+        return;
       }
-
-      // Create new layer group for selected locations
-      selectedLocationMarkers.value = L.layerGroup();
 
       // Add marker for each selected location
       selectedLocations.value.forEach(location => {
@@ -606,13 +615,17 @@ export default {
     };
 
     const updateMapView = () => {
-      if (!map.value) return;
+      if (!map.value || !map.value.setView) return;
 
       const lat = props.content?.initialLat || 51.505;
       const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
-      map.value.setView([lat, lng], zoom);
+      try {
+        map.value.setView([lat, lng], zoom);
+      } catch (error) {
+        console.error('[Map] Failed to set view:', error);
+      }
     };
 
     const updateMarkers = () => {
@@ -941,11 +954,12 @@ export default {
     };
 
     const onMapClick = async (e) => {
-      if (!map.value) return;
+      if (!map.value || !map.value.getZoom) return;
 
-      const { lat, lng } = e.latlng;
-      const zoom = map.value.getZoom();
-      const threshold = props.content?.locationZoomThreshold || 8;
+      try {
+        const { lat, lng } = e.latlng;
+        const zoom = map.value.getZoom();
+        const threshold = props.content?.locationZoomThreshold || 8;
 
       // Detect geographic location (country/state) from clicked coordinates with zoom awareness
       const detected = await detectGeographicLocation(lat, lng, zoom);
@@ -1077,15 +1091,25 @@ export default {
       } catch (error) {
         console.error('[Location] Failed to set marked location marker:', error);
       }
+      } catch (error) {
+        console.error('[Map] Click handler error:', error);
+      }
     };
 
     const updateHardinessHeatmap = () => {
+      if (!map.value || !map.value.removeLayer) return;
+
       if (hardinessHeatmapLayer.value) {
-        map.value.removeLayer(hardinessHeatmapLayer.value);
-        hardinessHeatmapLayer.value = null;
+        try {
+          map.value.removeLayer(hardinessHeatmapLayer.value);
+          hardinessHeatmapLayer.value = null;
+        } catch (error) {
+          console.error('[Heatmap] Failed to remove heatmap layer:', error);
+          hardinessHeatmapLayer.value = null;
+        }
       }
 
-      if (!props.content?.showHardinessHeatmap || !map.value) {
+      if (!props.content?.showHardinessHeatmap) {
         return;
       }
 
@@ -1974,9 +1998,9 @@ export default {
     };
 
     const initializeMap = () => {
-      log('🗺️ Initializing map...');
-      log('Map container ref:', mapContainer.value);
-      log('Map container element:', mapContainer.value?.tagName);
+      console.log('🗺️ Initializing map...');
+      console.log('Map container ref:', mapContainer.value);
+      console.log('Map container element:', mapContainer.value?.tagName);
 
       if (!mapContainer.value) {
         console.error('❌ Map container not found - cannot initialize map');
@@ -2018,6 +2042,11 @@ export default {
           trackResize: true
         }).setView([lat, lng], zoom);
 
+        if (!map.value) {
+          console.error('❌ Map creation failed - L.map returned null');
+          return;
+        }
+
         /* wwEditor:start */
         // Ensure dragging follows editor state
         if (map.value.dragging) {
@@ -2035,12 +2064,11 @@ export default {
 
         setupTileLayers();
         updateMapType();
-
-        map.value.on('click', onMapClick);
-
         setupResizeObserver();
 
         map.value.whenReady(async () => {
+          if (!map.value) return; // Safety check
+
           updateMarkers();
           updatePrivacyMode();
           updateHardinessHeatmap();
@@ -2049,17 +2077,21 @@ export default {
           // Initialize location context
           updateLocationContext();
 
-          map.value.on('moveend', updateBoundaries);
-          map.value.on('zoomend', () => {
-            updateBoundaries();
-            updateLocationContext();
-            setCurrentZoomLevel(map.value.getZoom());
-          });
+          // Attach event listeners only after map is ready
+          if (map.value) {
+            map.value.on('click', onMapClick);
+            map.value.on('moveend', updateBoundaries);
+            map.value.on('zoomend', () => {
+              updateBoundaries();
+              updateLocationContext();
+              setCurrentZoomLevel(map.value.getZoom());
+            });
 
-          // Track zoom changes
-          map.value.on('zoom', () => {
-            setCurrentZoomLevel(map.value.getZoom());
-          });
+            // Track zoom changes
+            map.value.on('zoom', () => {
+              setCurrentZoomLevel(map.value.getZoom());
+            });
+          }
 
           emit('trigger-event', {
             name: 'map-ready',
