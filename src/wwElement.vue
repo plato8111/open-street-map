@@ -102,6 +102,7 @@ export default {
     const hoveredCountry = ref(null);
     const hoveredState = ref(null);
     const geocodingDebounceTimer = ref(null);
+    const geocodeAbortController = ref(null);
 
     // Component state
     const geolocationRequested = ref(false);
@@ -1138,15 +1139,24 @@ export default {
     const reverseGeocode = async (lat, lng) => {
       if (!props.content?.enableReverseGeocoding) return null;
 
+      // Cancel previous request to prevent API spam
+      if (geocodeAbortController.value) {
+        geocodeAbortController.value.abort();
+      }
+
       try {
         const rateLimit = props.content?.geocodingRateLimit || 1000;
+
+        // Create new AbortController for this request
+        geocodeAbortController.value = new AbortController();
 
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
           {
             headers: {
               'User-Agent': 'WeWebOpenStreetMapComponent/1.0'
-            }
+            },
+            signal: geocodeAbortController.value.signal
           }
         );
 
@@ -1175,6 +1185,10 @@ export default {
 
         return geocoded;
       } catch (error) {
+        // Don't log errors for intentionally aborted requests
+        if (error.name === 'AbortError') {
+          return null;
+        }
         console.error('Reverse geocoding error:', error);
         return null;
       }
