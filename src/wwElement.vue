@@ -855,19 +855,27 @@ export default {
           return;
         }
 
+        // Convert Leaflet LatLngBounds to plain object for API
+        const boundsObj = {
+          north: bounds.getNorth(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          west: bounds.getWest()
+        };
+
         let boundaries;
 
         if (props.content?.useVectorTiles) {
           await vectorTileClient.init();
           boundaries = await loadCountriesVectorTiles(bounds, zoom);
         } else {
-          const cached = boundaryCache.get('countries', bounds);
+          const cached = boundaryCache.get('countries', boundsObj);
 
           if (cached) {
             boundaries = cached;
           } else {
-            boundaries = await boundaryAPI.getCountriesInBounds(bounds, zoom);
-            boundaryCache.set('countries', bounds, boundaries);
+            boundaries = await boundaryAPI.getCountriesInBounds(boundsObj, zoom);
+            boundaryCache.set('countries', boundsObj, boundaries);
           }
         }
 
@@ -907,19 +915,27 @@ export default {
           return;
         }
 
+        // Convert Leaflet LatLngBounds to plain object for API
+        const boundsObj = {
+          north: bounds.getNorth(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          west: bounds.getWest()
+        };
+
         let boundaries;
 
         if (props.content?.useVectorTiles) {
           await vectorTileClient.init();
           boundaries = await loadStatesVectorTiles(bounds, zoom);
         } else {
-          const cached = boundaryCache.get('states', bounds);
+          const cached = boundaryCache.get('states', boundsObj);
 
           if (cached) {
             boundaries = cached;
           } else {
-            boundaries = await boundaryAPI.getStatesInBounds(bounds, zoom);
-            boundaryCache.set('states', bounds, boundaries);
+            boundaries = await boundaryAPI.getStatesInBounds(boundsObj, zoom);
+            boundaryCache.set('states', boundsObj, boundaries);
           }
         }
 
