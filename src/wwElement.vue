@@ -2338,22 +2338,79 @@ export default {
     });
 
     onBeforeUnmount(() => {
+      // Abort any pending geocoding requests
+      if (geocodeAbortController.value) {
+        geocodeAbortController.value.abort();
+        geocodeAbortController.value = null;
+      }
+
+      // Clear debounce timers
+      if (debounceTimer.value) {
+        clearTimeout(debounceTimer.value);
+        debounceTimer.value = null;
+      }
+
+      // Remove map event listeners
+      if (map.value) {
+        map.value.off('click', onMapClick);
+        map.value.off('moveend', updateBoundaries);
+        map.value.off('zoomend');
+        map.value.off('zoom');
+      }
+
+      // Remove layers
+      if (countriesLayer.value) {
+        map.value?.removeLayer(countriesLayer.value);
+        countriesLayer.value = null;
+      }
+
+      if (statesLayer.value) {
+        map.value?.removeLayer(statesLayer.value);
+        statesLayer.value = null;
+      }
+
+      if (markersLayer.value) {
+        map.value?.removeLayer(markersLayer.value);
+        markersLayer.value = null;
+      }
+
       if (hardinessHeatmapLayer.value) {
         map.value?.removeLayer(hardinessHeatmapLayer.value);
         hardinessHeatmapLayer.value = null;
       }
 
+      // Remove markers
+      if (userLocationMarker.value) {
+        userLocationMarker.value.remove();
+        userLocationMarker.value = null;
+      }
+
+      if (userMarkedLocationMarker.value) {
+        userMarkedLocationMarker.value.remove();
+        userMarkedLocationMarker.value = null;
+      }
+
+      if (privacyCircle.value) {
+        privacyCircle.value.remove();
+        privacyCircle.value = null;
+      }
+
+      // Disconnect resize observer
       if (resizeObserver.value) {
         resizeObserver.value.disconnect();
         resizeObserver.value = null;
       }
 
+      // Clear timeouts
       if (resizeTimeout.value) {
         clearTimeout(resizeTimeout.value);
+        resizeTimeout.value = null;
       }
 
+      // Remove map last (this also cleans up remaining listeners/layers)
       if (map.value) {
         map.value.remove();
+        map.value = null;
       }
     });
 
