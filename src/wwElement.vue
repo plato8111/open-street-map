@@ -118,6 +118,20 @@ export default {
       defaultValue: null,
     }) || { value: ref(null), setValue: () => {} };
 
+    const { value: hoveredCountryData, setValue: setHoveredCountryData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'hoveredCountry',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
+    const { value: hoveredStateData, setValue: setHoveredStateData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'hoveredState',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
+
     const { value: geocodedAddress, setValue: setGeocodedAddress } = wwLib?.wwVariable?.useComponentVariable({
       uid: props.uid,
       name: 'geocodedAddress',
@@ -1063,6 +1077,7 @@ export default {
       const layer = e.target;
 
       hoveredCountry.value = feature.properties;
+      setHoveredCountryData(feature.properties); // Expose hovered country data
 
       // Don't change color if country is already selected
       if (!selectedCountries.value.includes(feature.id)) {
@@ -1093,6 +1108,7 @@ export default {
       }
 
       hoveredCountry.value = null;
+      setHoveredCountryData(null); // Clear hovered country data
 
       emit('trigger-event', {
         name: 'country-hover-out',
@@ -1145,6 +1161,7 @@ export default {
       const layer = e.target;
 
       hoveredState.value = feature.properties;
+      setHoveredStateData(feature.properties); // Expose hovered state data
 
       // Don't change color if state is already selected
       if (!selectedStates.value.includes(feature.id)) {
@@ -1175,6 +1192,7 @@ export default {
       }
 
       hoveredState.value = null;
+      setHoveredStateData(null); // Clear hovered state data
 
       emit('trigger-event', {
         name: 'state-hover-out',
@@ -1254,15 +1272,6 @@ export default {
           };
         },
         onEachFeature: (feature, layer) => {
-          // Bind tooltip to show country name on hover
-          if (feature.properties?.name) {
-            layer.bindTooltip(feature.properties.name, {
-              permanent: false,
-              direction: 'top',
-              className: 'boundary-tooltip'
-            });
-          }
-
           layer.on({
             mouseover: (e) => handleCountryHover(e, feature),
             mouseout: (e) => handleCountryHoverOut(e, feature),
@@ -1303,15 +1312,6 @@ export default {
           };
         },
         onEachFeature: (feature, layer) => {
-          // Bind tooltip to show state name on hover
-          if (feature.properties?.name) {
-            layer.bindTooltip(feature.properties.name, {
-              permanent: false,
-              direction: 'top',
-              className: 'boundary-tooltip'
-            });
-          }
-
           layer.on({
             mouseover: (e) => handleStateHover(e, feature),
             mouseout: (e) => handleStateHoverOut(e, feature),
@@ -1906,22 +1906,6 @@ export default {
       transform: none;
       font-size: 12px;
     }
-  }
-}
-
-// Boundary tooltip styling
-:global(.boundary-tooltip) {
-  background: rgba(0, 0, 0, 0.85) !important;
-  border: none !important;
-  border-radius: 4px !important;
-  padding: 8px 12px !important;
-  font-size: 14px !important;
-  font-weight: 500 !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
-
-  &::before {
-    border-top-color: rgba(0, 0, 0, 0.85) !important;
   }
 }
 </style>
