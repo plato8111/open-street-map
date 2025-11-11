@@ -1064,10 +1064,13 @@ export default {
 
       hoveredCountry.value = feature.properties;
 
-      layer.setStyle({
-        fillColor: props.content?.countryHoverColor || '#ff0000',
-        fillOpacity: props.content?.countryHoverOpacity || 0.3
-      });
+      // Don't change color if country is already selected
+      if (!selectedCountries.value.includes(feature.id)) {
+        layer.setStyle({
+          fillColor: props.content?.countryHoverColor || '#ff0000',
+          fillOpacity: props.content?.countryHoverOpacity || 0.3
+        });
+      }
 
       emit('trigger-event', {
         name: 'country-hover',
@@ -1143,10 +1146,13 @@ export default {
 
       hoveredState.value = feature.properties;
 
-      layer.setStyle({
-        fillColor: props.content?.stateHoverColor || '#ff0000',
-        fillOpacity: props.content?.stateHoverOpacity || 0.3
-      });
+      // Don't change color if state is already selected
+      if (!selectedStates.value.includes(feature.id)) {
+        layer.setStyle({
+          fillColor: props.content?.stateHoverColor || '#ff0000',
+          fillOpacity: props.content?.stateHoverOpacity || 0.3
+        });
+      }
 
       emit('trigger-event', {
         name: 'state-hover',
