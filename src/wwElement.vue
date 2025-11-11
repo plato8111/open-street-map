@@ -43,6 +43,7 @@ export default {
     wwEditorState: { type: Object, required: true },
     /* wwEditor:end */
   },
+  emits: ['trigger-event'],
   setup(props, { emit }) {
     // CRITICAL: Ensure wwLib is available as global, with fallback
     const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
