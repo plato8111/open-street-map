@@ -1116,7 +1116,8 @@ export default {
     const handleCountryHoverOut = (e, feature) => {
       const layer = e.target;
 
-      if (selectedCountry.value?.id !== feature.properties.id) {
+      // Reset style only if this country is not selected (use feature.id)
+      if (selectedCountry.value?.id !== feature.id) {
         layer.setStyle({
           fillColor: 'transparent',
           fillOpacity: 0
@@ -1132,7 +1133,7 @@ export default {
     };
 
     const handleCountryClick = (e, feature) => {
-      const isCurrentlySelected = selectedCountry.value?.id === feature.properties.id;
+      const isCurrentlySelected = selectedCountry.value?.id === feature.id;
 
       if (isCurrentlySelected) {
         selectedCountry.value = null;
@@ -1203,7 +1204,8 @@ export default {
     const handleStateHoverOut = (e, feature) => {
       const layer = e.target;
 
-      if (selectedState.value?.id !== feature.properties.id) {
+      // Reset style only if this state is not selected (use feature.id)
+      if (selectedState.value?.id !== feature.id) {
         layer.setStyle({
           fillColor: 'transparent',
           fillOpacity: 0
@@ -1219,7 +1221,7 @@ export default {
     };
 
     const handleStateClick = (e, feature) => {
-      const isCurrentlySelected = selectedState.value?.id === feature.properties.id;
+      const isCurrentlySelected = selectedState.value?.id === feature.id;
 
       if (isCurrentlySelected) {
         selectedState.value = null;
@@ -1288,8 +1290,8 @@ export default {
       console.log('🗺️ Creating Leaflet GeoJSON layer...');
       countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
-          // Check if this feature is selected
-          const isSelected = selectedCountry.value?.id === feature?.properties?.id;
+          // Check if this feature is selected (use feature.id, not feature.properties.id)
+          const isSelected = selectedCountry.value?.id === feature?.id;
 
           if (isSelected) {
             return {
@@ -1328,8 +1330,8 @@ export default {
 
       stateBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
-          // Check if this feature is selected
-          const isSelected = selectedState.value?.id === feature?.properties?.id;
+          // Check if this feature is selected (use feature.id, not feature.properties.id)
+          const isSelected = selectedState.value?.id === feature?.id;
 
           if (isSelected) {
             return {
