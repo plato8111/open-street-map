@@ -16,33 +16,25 @@
 </template>
 
 <script>
-console.log('📦 Loading Leaflet dependencies...');
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import L from 'leaflet';
-console.log('✅ Leaflet loaded:', typeof L);
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
-console.log('✅ Leaflet MarkerCluster loaded');
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.heat';
-console.log('✅ Leaflet Heat loaded');
 import { boundaryAPI, boundaryCache, getSupabaseClient } from './supabaseClient.js';
-console.log('✅ Supabase client loaded');
 import { vectorTileClient } from './vectorTileClient.js';
-console.log('✅ Vector tile client loaded');
 
 // Fix Leaflet's default marker icon issue
-console.log('🔧 Fixing Leaflet marker icons...');
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
 });
-console.log('✅ Leaflet marker icons fixed');
 
 export default {
-  name: 'OpenStreetMap',
   props: {
     uid: { type: String, required: true },
     content: { type: Object, required: true },
@@ -50,23 +42,8 @@ export default {
     wwEditorState: { type: Object, required: true },
     /* wwEditor:end */
   },
-  data() {
-    // CRITICAL: Ensure wwLib is available as global, with fallback
-    console.log('🔍 OpenStreetMap: Checking wwLib availability...');
-    console.log('typeof wwLib:', typeof wwLib);
-    console.log('wwLib exists:', !!wwLib);
-    console.log('wwLib.wwVariable exists:', !!(wwLib && wwLib.wwVariable));
-    console.log('wwLib.wwVariable.useComponentVariable type:', typeof (wwLib && wwLib.wwVariable && wwLib.wwVariable.useComponentVariable));
-
-    const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
-
-    if (!hasWwLib) {
-      console.warn('⚠️ OpenStreetMap: wwLib not fully available - component will use fallback mode');
-      console.warn('Available global objects:', Object.keys(window || global || {}));
-    } else {
-      console.log('✅ OpenStreetMap: wwLib is fully available');
-    }
-
+  emits: ['trigger-event'],
+  setup(props, { emit }) {
     // Editor state
     /* wwEditor:start */
     const isEditing = computed(() => props.wwEditorState?.isEditing);
@@ -85,10 +62,6 @@ export default {
     const hardinessHeatmapLayer = ref(null);
     const countryBoundaryLayer = ref(null);
     const stateBoundaryLayer = ref(null);
-    const selectedLocationMarkers = ref(null); // Layer group for selected location markers
-    const selectedCountries = ref(new Set());
-    const selectedStates = ref(new Set());
-    const selectedLocations = ref([]);
     const selectedCountry = ref(null);
     const selectedState = ref(null);
     const hoveredCountry = ref(null);
@@ -106,114 +79,56 @@ export default {
     const mapContainer = ref(null);
 
     // Internal variables for NoCode users
-    console.log('🔧 Setting up component variables...');
-    const { value: selectedLocation, setValue: setSelectedLocation } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'selectedLocation',
-          type: 'object',
-          defaultValue: null,
-        })
-      : { value: ref(null), setValue: () => {} };
-    console.log('selectedLocation variable setup:', { hasWwLib, value: selectedLocation.value });
+    const { value: selectedLocation, setValue: setSelectedLocation } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedLocation',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
 
-    const { value: userLocation, setValue: setUserLocation } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'userLocation',
-          type: 'object',
-          defaultValue: null,
-        })
-      : { value: ref(null), setValue: () => {} };
+    const { value: userLocation, setValue: setUserLocation } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'userLocation',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
 
-    const { value: clickedLocation, setValue: setClickedLocation } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'clickedLocation',
-          type: 'object',
-          defaultValue: null,
-        })
-      : { value: ref(null), setValue: () => {} };
+    const { value: clickedLocation, setValue: setClickedLocation } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'clickedLocation',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
 
-    const { value: selectedCountriesData, setValue: setSelectedCountriesData } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'selectedCountries',
-          type: 'array',
-          defaultValue: [],
-        })
-      : { value: ref([]), setValue: () => {} };
+    const { value: selectedCountryData, setValue: setSelectedCountryData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedCountry',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
 
-    const { value: selectedStatesData, setValue: setSelectedStatesData } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'selectedStates',
-          type: 'array',
-          defaultValue: [],
-        })
-      : { value: ref([]), setValue: () => {} };
+    const { value: selectedStateData, setValue: setSelectedStateData } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'selectedState',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
 
-    const { value: selectedLocationsData, setValue: setSelectedLocationsData } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'selectedLocations',
-          type: 'array',
-          defaultValue: [],
-        })
-      : { value: ref([]), setValue: () => {} };
-
-    const { value: selectedCountryData, setValue: setSelectedCountryData } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'selectedCountry',
-          type: 'object',
-          defaultValue: null,
-        })
-      : { value: ref(null), setValue: () => {} };
-
-    const { value: selectedStateData, setValue: setSelectedStateData } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'selectedState',
-          type: 'object',
-          defaultValue: null,
-        })
-      : { value: ref(null), setValue: () => {} };
-
-    const { value: geocodedAddress, setValue: setGeocodedAddress } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'geocodedAddress',
-          type: 'object',
-          defaultValue: null,
-        })
-      : { value: ref(null), setValue: () => {} };
-
-    const { value: currentZoomLevel, setValue: setCurrentZoomLevel } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'currentZoomLevel',
-          type: 'number',
-          defaultValue: 13,
-        })
-      : { value: ref(13), setValue: () => {} };
-
-    const { value: locationContext, setValue: setLocationContext } = hasWwLib
-      ? wwLib.wwVariable.useComponentVariable({
-          uid: props.uid,
-          name: 'locationContext',
-          type: 'object',
-          defaultValue: null,
-        })
-      : { value: ref(null), setValue: () => {} };
+    const { value: geocodedAddress, setValue: setGeocodedAddress } = wwLib?.wwVariable?.useComponentVariable({
+      uid: props.uid,
+      name: 'geocodedAddress',
+      type: 'object',
+      defaultValue: null,
+    }) || { value: ref(null), setValue: () => {} };
 
     // Computed styles
     const mapContainerStyle = computed(() => ({
-      '--border-radius': props.content?.mapStyle || '8px',
-      height: props.content?.mapHeight || '400px'
+      '--map-height': props.content?.mapHeight || '100%',
+      '--border-radius': props.content?.mapStyle || '8px'
     }));
 
     const mapStyle = computed(() => ({
+      height: 'var(--map-height)',
       borderRadius: 'var(--border-radius)',
       overflow: 'hidden'
     }));
@@ -323,242 +238,6 @@ export default {
         user.lng <= 180
       );
     });
-
-    // Helper: Get parent country for a state
-    const getStateParentCountry = (stateId) => {
-      if (!stateBoundaryLayer.value) return null;
-
-      let parentCountry = null;
-      stateBoundaryLayer.value.eachLayer(layer => {
-        if (layer.feature?.properties?.id === stateId) {
-          const stateCountryId = layer.feature.properties.country_id;
-
-          if (countryBoundaryLayer.value) {
-            countryBoundaryLayer.value.eachLayer(countryLayer => {
-              if (countryLayer.feature?.properties?.id === stateCountryId) {
-                parentCountry = countryLayer.feature.properties;
-              }
-            });
-          }
-        }
-      });
-
-      return parentCountry;
-    };
-
-    // Helper: Get parent state for a location
-    const getLocationParentState = async (lat, lng) => {
-      const supabase = getSupabaseClient();
-      if (!supabase) return null; // Gracefully handle missing Supabase
-
-      const zoom = map.value?.getZoom() || 13;
-      const stateMinZoom = props.content?.stateMinZoom ?? 4;
-
-      if (zoom < stateMinZoom) return null;
-
-      try {
-        const { data: stateData } = await supabase
-          .schema('gis')
-          .rpc('find_state_at_point', {
-            point_lat: lat,
-            point_lng: lng
-          });
-
-        if (stateData && stateData.length > 0) {
-          return {
-            id: stateData[0].id,
-            name: stateData[0].name,
-            name_en: stateData[0].name_en || stateData[0].name,
-            adm1_code: stateData[0].adm1_code,
-            admin: stateData[0].admin,
-            country_id: stateData[0].country_id
-          };
-        }
-      } catch (error) {
-        console.error('Error finding parent state:', error);
-      }
-
-      return null;
-    };
-
-    // Helper: Get parent country for a location
-    const getLocationParentCountry = async (lat, lng) => {
-      const supabase = getSupabaseClient();
-      if (!supabase) return null; // Gracefully handle missing Supabase
-
-      try {
-        const { data: countryData } = await supabase
-          .schema('gis')
-          .rpc('find_country_at_point', {
-            point_lat: lat,
-            point_lng: lng
-          });
-
-        if (countryData && countryData.length > 0) {
-          return {
-            id: countryData[0].id,
-            name: countryData[0].name,
-            iso_a2: countryData[0].iso_a2,
-            iso_a3: countryData[0].iso_a3
-          };
-        }
-      } catch (error) {
-        console.error('Error finding parent country:', error);
-      }
-
-      return null;
-    };
-
-    // Helper: Update internal variables with current selections
-    const updateSelectionVariables = () => {
-      setSelectedCountriesData(Array.from(selectedCountries.value).map(id => {
-        let countryData = null;
-
-        if (countryBoundaryLayer.value) {
-          countryBoundaryLayer.value.eachLayer(layer => {
-            if (layer.feature?.properties?.id === id) {
-              countryData = layer.feature.properties;
-            }
-          });
-        }
-
-        return countryData;
-      }).filter(Boolean));
-
-      setSelectedStatesData(Array.from(selectedStates.value).map(id => {
-        let stateData = null;
-
-        if (stateBoundaryLayer.value) {
-          stateBoundaryLayer.value.eachLayer(layer => {
-            if (layer.feature?.properties?.id === id) {
-              stateData = layer.feature.properties;
-            }
-          });
-        }
-
-        return stateData;
-      }).filter(Boolean));
-
-      setSelectedLocationsData(selectedLocations.value);
-    };
-
-    // Helper: Update selected location markers on map
-    const updateSelectedLocationMarkers = () => {
-      if (!map.value) return;
-
-      // Remove existing layer group
-      if (selectedLocationMarkers.value) {
-        map.value.removeLayer(selectedLocationMarkers.value);
-      }
-
-      // Create new layer group for selected locations
-      selectedLocationMarkers.value = L.layerGroup();
-
-      // Add marker for each selected location
-      selectedLocations.value.forEach(location => {
-        const markerColor = props.content?.selectedLocationMarkerColor || '#FF5722';
-        const marker = L.marker([location.lat, location.lng], {
-          icon: L.divIcon({
-            className: 'selected-location-marker',
-            html: `<div class="selected-location-dot" style="background-color: ${markerColor}; border: 2px solid white; border-radius: 50%; width: 16px; height: 16px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);"></div>`,
-            iconSize: [16, 16],
-            iconAnchor: [8, 8]
-          })
-        });
-
-        // Add click handler for marker - toggle deselection
-        marker.on('click', (e) => {
-          // Stop event propagation to prevent map click
-          L.DomEvent.stopPropagation(e);
-
-          // Remove this location from selections
-          selectedLocations.value = selectedLocations.value.filter(loc => loc.id !== location.id);
-
-          // Check if we should deselect parent state
-          const parentStateId = location.parentState?.id;
-          if (parentStateId) {
-            // Check if any other locations still exist in this state
-            const hasOtherLocationsInState = selectedLocations.value.some(loc =>
-              loc.parentState?.id === parentStateId
-            );
-
-            // If no more locations in this state, deselect the state
-            if (!hasOtherLocationsInState) {
-              selectedStates.value.delete(parentStateId);
-
-              // Update state visual style
-              if (stateBoundaryLayer.value) {
-                stateBoundaryLayer.value.eachLayer(layer => {
-                  if (layer.feature?.properties?.id === parentStateId) {
-                    layer.setStyle({
-                      fillColor: 'transparent',
-                      fillOpacity: 0
-                    });
-                  }
-                });
-              }
-
-              // Check if we should deselect parent country
-              const parentCountryId = location.parentCountry?.id;
-              if (parentCountryId) {
-                // Check if any other states still exist in this country
-                const hasOtherStatesInCountry = Array.from(selectedStates.value).some(stateId => {
-                  let countryId = null;
-                  if (stateBoundaryLayer.value) {
-                    stateBoundaryLayer.value.eachLayer(layer => {
-                      if (layer.feature?.properties?.id === stateId) {
-                        countryId = layer.feature.properties.country_id;
-                      }
-                    });
-                  }
-                  return countryId === parentCountryId;
-                });
-
-                // Check if any other locations still exist in this country
-                const hasOtherLocationsInCountry = selectedLocations.value.some(loc =>
-                  loc.parentCountry?.id === parentCountryId
-                );
-
-                // If no more states or locations in this country, deselect the country
-                if (!hasOtherStatesInCountry && !hasOtherLocationsInCountry) {
-                  selectedCountries.value.delete(parentCountryId);
-
-                  // Update country visual style
-                  if (countryBoundaryLayer.value) {
-                    countryBoundaryLayer.value.eachLayer(layer => {
-                      if (layer.feature?.properties?.id === parentCountryId) {
-                        layer.setStyle({
-                          fillColor: 'transparent',
-                          fillOpacity: 0
-                        });
-                      }
-                    });
-                  }
-                }
-              }
-            }
-          }
-
-          // Update markers and variables
-          updateSelectedLocationMarkers();
-          updateSelectionVariables();
-          updateLocationContext();
-
-          emit('trigger-event', {
-            name: 'location-deselected',
-            event: {
-              location: location,
-              position: { lat: location.lat, lng: location.lng }
-            }
-          });
-        });
-
-        selectedLocationMarkers.value.addLayer(marker);
-      });
-
-      // Add layer group to map
-      selectedLocationMarkers.value.addTo(map.value);
-    };
 
     // Methods
     const setupTileLayers = () => {
@@ -917,150 +596,29 @@ export default {
       );
     };
 
-    const updateLocationContext = () => {
-      const zoom = map.value?.getZoom() || 13;
-      const threshold = props.content?.locationZoomThreshold || 8;
-
-      if (zoom >= threshold) {
-        // At or above threshold: location mode
-        const contextData = {
-          mode: 'location',
-          zoom: zoom,
-          countries: selectedCountriesData.value || [],
-          states: selectedStatesData.value || [],
-          locations: selectedLocationsData.value || []
-        };
-
-        // Build hierarchical location string
-        const parts = [];
-        if (selectedCountriesData.value?.length > 0) {
-          parts.push(`Countries: ${selectedCountriesData.value.map(c => c.name).join(', ')}`);
-        }
-        if (selectedStatesData.value?.length > 0) {
-          parts.push(`States: ${selectedStatesData.value.map(s => s.name).join(', ')}`);
-        }
-        if (selectedLocationsData.value?.length > 0) {
-          parts.push(`Locations: ${selectedLocationsData.value.length}`);
-        }
-        contextData.hierarchicalLocation = parts.join(' / ');
-
-        setLocationContext(contextData);
-      } else {
-        // Below threshold: boundary mode
-        const contextData = {
-          mode: 'boundary',
-          zoom: zoom,
-          countries: selectedCountriesData.value || [],
-          states: selectedStatesData.value || [],
-          locations: []
-        };
-
-        // Build hierarchical location string for boundary mode
-        const parts = [];
-        if (selectedCountriesData.value?.length > 0) {
-          parts.push(`Countries: ${selectedCountriesData.value.map(c => c.name).join(', ')}`);
-        }
-        if (selectedStatesData.value?.length > 0) {
-          parts.push(`States: ${selectedStatesData.value.map(s => s.name).join(', ')}`);
-        }
-        contextData.hierarchicalLocation = parts.length > 0 ? parts.join(' / ') : null;
-
-        setLocationContext(contextData);
-      }
-    };
-
-    const onMapClick = async (e) => {
+    const onMapClick = (e) => {
       if (!map.value) return;
 
       const { lat, lng } = e.latlng;
-      const zoom = map.value.getZoom();
-      const threshold = props.content?.locationZoomThreshold || 8;
-
-      // Detect geographic location (country/state) from clicked coordinates with zoom awareness
-      const detected = await detectGeographicLocation(lat, lng, zoom);
 
       emit('trigger-event', {
         name: 'map-click',
         event: {
-          position: { lat, lng },
-          zoom: zoom,
-          mode: zoom >= threshold ? 'location' : 'boundary',
-          country: detected.country,
-          state: detected.state
+          position: { lat, lng }
         }
       });
 
-      // At location zoom threshold - add location to selections with hierarchical parents
-      if (zoom >= threshold && props.content?.allowClickToMark) {
-        // Get parent state and country
-        const parentState = await getLocationParentState(lat, lng);
-        const parentCountry = await getLocationParentCountry(lat, lng);
-
-        // Add location to selections
-        const locationData = {
-          id: `loc-${Date.now()}`,
-          lat,
-          lng,
-          timestamp: new Date().toISOString(),
-          parentState: parentState,
-          parentCountry: parentCountry
-        };
-
-        selectedLocations.value.push(locationData);
-
-        // Auto-select parent state
-        if (parentState?.id) {
-          selectedStates.value.add(parentState.id);
-
-          // Update parent state visual style
-          if (stateBoundaryLayer.value) {
-            stateBoundaryLayer.value.eachLayer(layer => {
-              if (layer.feature?.properties?.id === parentState.id) {
-                layer.setStyle({
-                  fillColor: props.content?.stateSelectedColor || '#0000ff',
-                  fillOpacity: props.content?.stateSelectedOpacity || 0.5
-                });
-              }
-            });
-          }
-        }
-
-        // Auto-select parent country
-        if (parentCountry?.id) {
-          selectedCountries.value.add(parentCountry.id);
-
-          // Update parent country visual style
-          if (countryBoundaryLayer.value) {
-            countryBoundaryLayer.value.eachLayer(layer => {
-              if (layer.feature?.properties?.id === parentCountry.id) {
-                layer.setStyle({
-                  fillColor: props.content?.countrySelectedColor || '#0000ff',
-                  fillOpacity: props.content?.countrySelectedOpacity || 0.5
-                });
-              }
-            });
-          }
-        }
-
-        // Update internal variables and markers
-        updateSelectionVariables();
-        updateSelectedLocationMarkers();
-
-        setClickedLocation(locationData);
-      } else {
-        // Clear clicked location in boundary mode
-        setClickedLocation(null);
-      }
-
-      // Update location context with current zoom-based mode (now includes detected country/state)
-      updateLocationContext();
+      setClickedLocation({
+        lat,
+        lng,
+        timestamp: new Date().toISOString()
+      });
 
       if (props.content?.enableReverseGeocoding) {
         debouncedReverseGeocode(lat, lng, 'location-geocoded');
       }
 
-      // Only allow marking location at or above threshold
-      if (!props.content?.allowClickToMark || zoom < threshold) return;
+      if (!props.content?.allowClickToMark) return;
 
       try {
         if (userMarkedLocationMarker.value) {
@@ -1192,96 +750,6 @@ export default {
       }, rateLimit);
     };
 
-    // Geographic Detection (Country/State from coordinates) - Zoom-aware
-    const detectGeographicLocation = async (lat, lng, currentZoom) => {
-      try {
-        const supabase = getSupabaseClient();
-        if (!supabase) return { country: null, state: null }; // Gracefully handle missing Supabase
-
-        // Get zoom thresholds
-        const stateMinZoom = props.content?.stateMinZoom ?? 4;
-        const locationZoomThreshold = props.content?.locationZoomThreshold || 8;
-
-        let detectedCountry = null;
-        let detectedState = null;
-
-        // Always try to detect country (available at all zoom levels)
-        const { data: countryData, error: countryError } = await supabase
-          .schema('gis')
-          .rpc('find_country_at_point', {
-            point_lat: lat,
-            point_lng: lng
-          });
-
-        if (countryError) {
-          console.warn('Country detection error:', countryError);
-        }
-
-        if (countryData && countryData.length > 0) {
-          detectedCountry = {
-            id: countryData[0].id,
-            name: countryData[0].name,
-            iso_a2: countryData[0].iso_a2,
-            iso_a3: countryData[0].iso_a3
-          };
-
-          // Update selected country data
-          selectedCountry.value = detectedCountry;
-          setSelectedCountryData(detectedCountry);
-
-          console.log('✅ Detected country:', detectedCountry.name, 'at zoom:', currentZoom);
-
-          // Only detect state if zoom >= stateMinZoom
-          if (currentZoom >= stateMinZoom) {
-            const { data: stateData, error: stateError } = await supabase
-              .schema('gis')
-              .rpc('find_state_at_point', {
-                point_lat: lat,
-                point_lng: lng,
-                country_id: countryData[0].id
-              });
-
-            if (stateError) {
-              console.warn('State detection error:', stateError);
-            }
-
-            if (stateData && stateData.length > 0) {
-              detectedState = {
-                id: stateData[0].id,
-                name: stateData[0].name,
-                name_en: stateData[0].name_en || stateData[0].name,
-                adm1_code: stateData[0].adm1_code,
-                admin: stateData[0].admin
-              };
-
-              // Update selected state data
-              selectedState.value = detectedState;
-              setSelectedStateData(detectedState);
-
-              console.log('✅ Detected state:', detectedState.name, 'at zoom:', currentZoom);
-            }
-          } else {
-            // Clear state data when zoom is below state threshold
-            selectedState.value = null;
-            setSelectedStateData(null);
-            console.log('🔍 Zoom too low for state detection (zoom:', currentZoom, '< min:', stateMinZoom + ')');
-          }
-        }
-
-        return {
-          country: detectedCountry,
-          state: detectedState
-        };
-
-      } catch (error) {
-        console.error('Geographic detection error:', error);
-        return {
-          country: null,
-          state: null
-        };
-      }
-    };
-
     // Country/State Boundary Rendering
     const loadCountryBoundaries = async () => {
       if (!props.content?.enableCountryHover || !map.value) {
@@ -1289,13 +757,6 @@ export default {
           enableCountryHover: props.content?.enableCountryHover,
           mapExists: !!map.value
         });
-        return;
-      }
-
-      // Check if Supabase is available
-      const supabase = getSupabaseClient();
-      if (!supabase) {
-        console.warn('⚠️ Country boundaries disabled: Supabase not configured');
         return;
       }
 
@@ -1373,13 +834,6 @@ export default {
     const loadStateBoundaries = async () => {
       if (!props.content?.enableStateHover || !map.value) return;
 
-      // Check if Supabase is available
-      const supabase = getSupabaseClient();
-      if (!supabase) {
-        console.warn('⚠️ State boundaries disabled: Supabase not configured');
-        return;
-      }
-
       try {
         console.log('Loading state boundaries...');
 
@@ -1448,7 +902,6 @@ export default {
 
       try {
         const supabase = getSupabaseClient();
-        if (!supabase) return []; // Gracefully handle missing Supabase
 
         const { data, error } = await supabase
           .schema('gis')
@@ -1510,7 +963,6 @@ export default {
 
       try {
         const supabase = getSupabaseClient();
-        if (!supabase) return []; // Gracefully handle missing Supabase
 
         const { data, error } = await supabase
           .schema('gis')
@@ -1589,8 +1041,7 @@ export default {
     const handleCountryHoverOut = (e, feature) => {
       const layer = e.target;
 
-      // Only reset if not selected
-      if (!selectedCountries.value.has(feature.properties.id)) {
+      if (selectedCountry.value?.id !== feature.properties.id) {
         layer.setStyle({
           fillColor: 'transparent',
           fillOpacity: 0
@@ -1606,40 +1057,11 @@ export default {
     };
 
     const handleCountryClick = (e, feature) => {
-      const countryId = feature.properties.id;
-      const isCurrentlySelected = selectedCountries.value.has(countryId);
+      const isCurrentlySelected = selectedCountry.value?.id === feature.properties.id;
 
       if (isCurrentlySelected) {
-        // Deselect country AND cascade deselect all child states and locations
-        selectedCountries.value.delete(countryId);
-
-        // Deselect all child states
-        const childStateIds = [];
-        if (stateBoundaryLayer.value) {
-          stateBoundaryLayer.value.eachLayer(layer => {
-            if (layer.feature?.properties?.country_id === countryId) {
-              const stateId = layer.feature.properties.id;
-              childStateIds.push(stateId);
-              selectedStates.value.delete(stateId);
-
-              // Update state visual style
-              layer.setStyle({
-                fillColor: 'transparent',
-                fillOpacity: 0
-              });
-            }
-          });
-        }
-
-        // Count and deselect all child locations
-        const locationsBeforeCount = selectedLocations.value.length;
-        selectedLocations.value = selectedLocations.value.filter(loc => {
-          return loc.parentCountry?.id !== countryId;
-        });
-        const cascadedLocationsCount = locationsBeforeCount - selectedLocations.value.length;
-
-        // Update location markers
-        updateSelectedLocationMarkers();
+        selectedCountry.value = null;
+        setSelectedCountryData(null);
 
         e.target.setStyle({
           fillColor: 'transparent',
@@ -1648,15 +1070,20 @@ export default {
 
         emit('trigger-event', {
           name: 'country-deselected',
-          event: {
-            country: feature.properties,
-            cascadedStates: childStateIds.length,
-            cascadedLocations: cascadedLocationsCount
-          }
+          event: { country: feature.properties }
         });
       } else {
-        // Select country (multi-select enabled - does NOT auto-select states/locations)
-        selectedCountries.value.add(countryId);
+        if (countryBoundaryLayer.value) {
+          countryBoundaryLayer.value.eachLayer(layer => {
+            layer.setStyle({
+              fillColor: 'transparent',
+              fillOpacity: 0
+            });
+          });
+        }
+
+        selectedCountry.value = feature.properties;
+        setSelectedCountryData(feature.properties);
 
         e.target.setStyle({
           fillColor: props.content?.countrySelectedColor || '#0000ff',
@@ -1669,21 +1096,12 @@ export default {
         });
       }
 
-      // Update internal variables
-      updateSelectionVariables();
-
-      // Update location context after country selection
-      updateLocationContext();
-
       emit('trigger-event', {
         name: 'country-click',
         event: {
           country: feature.properties,
           coordinates: { lat: e.latlng.lat, lng: e.latlng.lng },
-          action: isCurrentlySelected ? 'deselected' : 'selected',
-          selectedCountries: Array.from(selectedCountries.value),
-          selectedStates: Array.from(selectedStates.value),
-          selectedLocations: selectedLocations.value.length
+          action: isCurrentlySelected ? 'deselected' : 'selected'
         }
       });
     };
@@ -1710,8 +1128,7 @@ export default {
     const handleStateHoverOut = (e, feature) => {
       const layer = e.target;
 
-      // Only reset if not selected
-      if (!selectedStates.value.has(feature.properties.id)) {
+      if (selectedState.value?.id !== feature.properties.id) {
         layer.setStyle({
           fillColor: 'transparent',
           fillOpacity: 0
@@ -1727,66 +1144,11 @@ export default {
     };
 
     const handleStateClick = (e, feature) => {
-      const stateId = feature.properties.id;
-      const isCurrentlySelected = selectedStates.value.has(stateId);
+      const isCurrentlySelected = selectedState.value?.id === feature.properties.id;
 
       if (isCurrentlySelected) {
-        // Deselect state and cascade to locations
-        selectedStates.value.delete(stateId);
-
-        // Remove all child locations in this state
-        const removedLocationsCount = selectedLocations.value.length;
-        selectedLocations.value = selectedLocations.value.filter(loc => {
-          return loc.parentState?.id !== stateId;
-        });
-        const actualRemoved = removedLocationsCount - selectedLocations.value.length;
-
-        // Update location markers
-        updateSelectedLocationMarkers();
-
-        // Check if parent country should be deselected
-        // (only if no other states in same country are selected AND no locations in the country)
-        const parentCountryId = feature.properties.country_id;
-        if (parentCountryId) {
-          let hasOtherStatesSelected = false;
-
-          if (stateBoundaryLayer.value) {
-            stateBoundaryLayer.value.eachLayer(layer => {
-              const layerStateId = layer.feature?.properties?.id;
-              const layerCountryId = layer.feature?.properties?.country_id;
-
-              if (
-                layerCountryId === parentCountryId &&
-                layerStateId !== stateId &&
-                selectedStates.value.has(layerStateId)
-              ) {
-                hasOtherStatesSelected = true;
-              }
-            });
-          }
-
-          // Check if any locations still exist in this country
-          const hasLocationsInCountry = selectedLocations.value.some(loc =>
-            loc.parentCountry?.id === parentCountryId
-          );
-
-          // If no other states OR locations in the same country are selected, deselect the country
-          if (!hasOtherStatesSelected && !hasLocationsInCountry) {
-            selectedCountries.value.delete(parentCountryId);
-
-            // Update parent country visual style
-            if (countryBoundaryLayer.value) {
-              countryBoundaryLayer.value.eachLayer(layer => {
-                if (layer.feature?.properties?.id === parentCountryId) {
-                  layer.setStyle({
-                    fillColor: 'transparent',
-                    fillOpacity: 0
-                  });
-                }
-              });
-            }
-          }
-        }
+        selectedState.value = null;
+        setSelectedStateData(null);
 
         e.target.setStyle({
           fillColor: 'transparent',
@@ -1795,32 +1157,20 @@ export default {
 
         emit('trigger-event', {
           name: 'state-deselected',
-          event: {
-            state: feature.properties,
-            cascadedLocations: actualRemoved
-          }
+          event: { state: feature.properties }
         });
       } else {
-        // Select state (multi-select enabled) and auto-select parent country
-        selectedStates.value.add(stateId);
-
-        // Auto-select parent country
-        const parentCountry = getStateParentCountry(stateId);
-        if (parentCountry?.id) {
-          selectedCountries.value.add(parentCountry.id);
-
-          // Update parent country visual style
-          if (countryBoundaryLayer.value) {
-            countryBoundaryLayer.value.eachLayer(layer => {
-              if (layer.feature?.properties?.id === parentCountry.id) {
-                layer.setStyle({
-                  fillColor: props.content?.countrySelectedColor || '#0000ff',
-                  fillOpacity: props.content?.countrySelectedOpacity || 0.5
-                });
-              }
+        if (stateBoundaryLayer.value) {
+          stateBoundaryLayer.value.eachLayer(layer => {
+            layer.setStyle({
+              fillColor: 'transparent',
+              fillOpacity: 0
             });
-          }
+          });
         }
+
+        selectedState.value = feature.properties;
+        setSelectedStateData(feature.properties);
 
         e.target.setStyle({
           fillColor: props.content?.stateSelectedColor || '#0000ff',
@@ -1829,28 +1179,16 @@ export default {
 
         emit('trigger-event', {
           name: 'state-selected',
-          event: {
-            state: feature.properties,
-            parentCountry: parentCountry
-          }
+          event: { state: feature.properties }
         });
       }
-
-      // Update internal variables
-      updateSelectionVariables();
-
-      // Update location context after state selection
-      updateLocationContext();
 
       emit('trigger-event', {
         name: 'state-click',
         event: {
           state: feature.properties,
           coordinates: { lat: e.latlng.lat, lng: e.latlng.lng },
-          action: isCurrentlySelected ? 'deselected' : 'selected',
-          selectedCountries: Array.from(selectedCountries.value),
-          selectedStates: Array.from(selectedStates.value),
-          selectedLocations: selectedLocations.value.length
+          action: isCurrentlySelected ? 'deselected' : 'selected'
         }
       });
     };
@@ -1867,8 +1205,8 @@ export default {
 
       countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
-          // Check if this feature is selected (using Set)
-          const isSelected = selectedCountries.value.has(feature?.properties?.id);
+          // Check if this feature is selected
+          const isSelected = selectedCountry.value?.id === feature?.properties?.id;
 
           if (isSelected) {
             return {
@@ -1876,8 +1214,7 @@ export default {
               fillOpacity: props.content?.countrySelectedOpacity || 0.5,
               color: props.content?.countryBorderColor || '#666666',
               weight: props.content?.countryBorderWidth || 1,
-              opacity: props.content?.countryBorderOpacity || 0.5,
-              interactive: true
+              opacity: props.content?.countryBorderOpacity || 0.5
             };
           }
 
@@ -1886,8 +1223,7 @@ export default {
             fillOpacity: 0,
             color: props.content?.countryBorderColor || '#666666',
             weight: props.content?.countryBorderWidth || 1,
-            opacity: props.content?.countryBorderOpacity || 0.5,
-            interactive: true
+            opacity: props.content?.countryBorderOpacity || 0.5
           };
         },
         onEachFeature: (feature, layer) => {
@@ -1909,8 +1245,8 @@ export default {
 
       stateBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
-          // Check if this feature is selected (using Set)
-          const isSelected = selectedStates.value.has(feature?.properties?.id);
+          // Check if this feature is selected
+          const isSelected = selectedState.value?.id === feature?.properties?.id;
 
           if (isSelected) {
             return {
@@ -1918,8 +1254,7 @@ export default {
               fillOpacity: props.content?.stateSelectedOpacity || 0.5,
               color: props.content?.stateBorderColor || '#666666',
               weight: props.content?.stateBorderWidth || 1,
-              opacity: props.content?.stateBorderOpacity || 0.5,
-              interactive: true
+              opacity: props.content?.stateBorderOpacity || 0.5
             };
           }
 
@@ -1928,8 +1263,7 @@ export default {
             fillOpacity: 0,
             color: props.content?.stateBorderColor || '#666666',
             weight: props.content?.stateBorderWidth || 1,
-            opacity: props.content?.stateBorderOpacity || 0.5,
-            interactive: true
+            opacity: props.content?.stateBorderOpacity || 0.5
           };
         },
         onEachFeature: (feature, layer) => {
@@ -1965,7 +1299,7 @@ export default {
 
       countryBoundaryLayer.value.eachLayer(layer => {
         const feature = layer.feature;
-        const isSelected = selectedCountries.value.has(feature?.properties?.id);
+        const isSelected = selectedCountry.value?.id === feature?.properties?.id;
 
         if (isSelected) {
           layer.setStyle({
@@ -1992,7 +1326,7 @@ export default {
 
       stateBoundaryLayer.value.eachLayer(layer => {
         const feature = layer.feature;
-        const isSelected = selectedStates.value.has(feature?.properties?.id);
+        const isSelected = selectedState.value?.id === feature?.properties?.id;
 
         if (isSelected) {
           layer.setStyle({
@@ -2046,12 +1380,7 @@ export default {
     };
 
     const initializeMap = () => {
-      console.log('🗺️ Initializing map...');
-      console.log('Map container ref:', mapContainer.value);
-      console.log('Map container element:', mapContainer.value?.tagName);
-
       if (!mapContainer.value) {
-        console.error('❌ Map container not found - cannot initialize map');
         return;
       }
 
@@ -2059,30 +1388,13 @@ export default {
       const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
-      console.log('Map config:', { lat, lng, zoom, content: props.content });
-
       try {
         if (map.value) {
-          console.log('Removing existing map instance');
           map.value.remove();
           map.value = null;
         }
 
-        /* wwEditor:start */
-        // In editor mode, disable dragging so component can be moved
-        const allowInteraction = !isEditing.value;
-        /* wwEditor:end */
-
-        console.log('Creating Leaflet map instance...');
         map.value = L.map(mapContainer.value, {
-          /* wwEditor:start */
-          dragging: allowInteraction,
-          touchZoom: allowInteraction,
-          doubleClickZoom: allowInteraction,
-          scrollWheelZoom: allowInteraction,
-          boxZoom: allowInteraction,
-          keyboard: allowInteraction,
-          /* wwEditor:end */
           dragging: true,
           touchZoom: true,
           doubleClickZoom: true,
@@ -2093,19 +1405,8 @@ export default {
           tap: true,
           trackResize: true
         }).setView([lat, lng], zoom);
-        console.log('✅ Map instance created successfully');
 
-        /* wwEditor:start */
-        // Ensure dragging follows editor state
-        if (map.value.dragging) {
-          if (allowInteraction) {
-            map.value.dragging.enable();
-          } else {
-            map.value.dragging.disable();
-          }
-        }
-        /* wwEditor:end */
-        // Ensure dragging is explicitly enabled in production
+        // Ensure dragging is explicitly enabled
         if (map.value.dragging) {
           map.value.dragging.enable();
         }
@@ -2117,43 +1418,22 @@ export default {
 
         setupResizeObserver();
 
-        console.log('Setting up map ready callback...');
         map.value.whenReady(async () => {
-          console.log('🗺️ Map is ready, initializing features...');
           updateMarkers();
           updatePrivacyMode();
           updateHardinessHeatmap();
           await updateBoundaries();
 
-          // Initialize location context
-          updateLocationContext();
-
           map.value.on('moveend', updateBoundaries);
-          map.value.on('zoomend', () => {
-            updateBoundaries();
-            updateLocationContext();
-            setCurrentZoomLevel(map.value.getZoom());
-          });
+          map.value.on('zoomend', updateBoundaries);
 
-          // Track zoom changes
-          map.value.on('zoom', () => {
-            setCurrentZoomLevel(map.value.getZoom());
-          });
-
-          console.log('✅ Map fully initialized and ready');
           emit('trigger-event', {
             name: 'map-ready',
             event: {}
           });
         });
       } catch (error) {
-        console.error('❌ Map initialization failed:', error);
-        console.error('Error details:', {
-          message: error.message,
-          stack: error.stack,
-          wwLibAvailable: typeof wwLib !== 'undefined',
-          mapContainerRef: !!mapContainer.value
-        });
+        // Silent fail - map initialization errors handled by re-init
       }
     };
 
@@ -2179,7 +1459,6 @@ export default {
       props.content?.privacyRadiusMiles,
       props.content?.privacyUnit,
       props.content?.allowClickToMark,
-      props.content?.locationZoomThreshold,
       props.content?.showHardinessHeatmap,
       props.content?.hardinessHeatmapRadius,
       props.content?.userHardinessZone,
@@ -2214,23 +1493,17 @@ export default {
       if (newVals[10] !== oldVals?.[10] || newVals[11] !== oldVals?.[11] || newVals[12] !== oldVals?.[12]) { // privacy radius changed
         nextTick(() => updatePrivacyCircle());
       }
-      if (newVals[13] !== oldVals?.[13] || newVals[14] !== oldVals?.[14]) { // allowClickToMark or locationZoomThreshold changed
-        nextTick(() => updateLocationContext());
-      }
-      if (newVals[15] !== oldVals?.[15] || newVals[16] !== oldVals?.[16] || newVals[17] !== oldVals?.[17]) { // hardiness changed
+      if (newVals[14] !== oldVals?.[14] || newVals[15] !== oldVals?.[15] || newVals[16] !== oldVals?.[16]) { // hardiness changed
         nextTick(() => updateHardinessHeatmap());
       }
-      if (newVals[18] !== oldVals?.[18]) { // isOnline changed
+      if (newVals[17] !== oldVals?.[17]) { // isOnline changed
         updateMarkers();
         if (userLocationMarker.value) {
           updateUserLocationMarker();
         }
       }
-      if (newVals[21] !== oldVals?.[21] || newVals[22] !== oldVals?.[22] || newVals[24] !== oldVals?.[24] || newVals[25] !== oldVals?.[25] || newVals[26] !== oldVals?.[26] || newVals[27] !== oldVals?.[27] || newVals[28] !== oldVals?.[28]) { // boundary enable toggles and zoom levels changed
-        nextTick(() => {
-          updateBoundaries();
-          updateLocationContext();
-        });
+      if (newVals[20] !== oldVals?.[20] || newVals[21] !== oldVals?.[21] || newVals[23] !== oldVals?.[23] || newVals[24] !== oldVals?.[24] || newVals[25] !== oldVals?.[25] || newVals[26] !== oldVals?.[26]) { // boundary enable toggles and zoom levels changed
+        nextTick(() => updateBoundaries());
       }
     }, { deep: true });
 
@@ -2261,13 +1534,11 @@ export default {
       props.content?.stateBorderWidth,
       props.content?.stateBorderOpacity,
       props.content?.stateSelectedColor,
-      props.content?.stateSelectedOpacity,
-      props.content?.selectedLocationMarkerColor
+      props.content?.stateSelectedOpacity
     ], () => {
       nextTick(() => {
         updateCountryBoundaryStyles();
         updateStateBoundaryStyles();
-        updateSelectedLocationMarkers(); // Re-render markers with new color
       });
     }, { deep: true });
 
@@ -2282,28 +1553,15 @@ export default {
 
     // Lifecycle
     onMounted(() => {
-      console.log('🎯 OpenStreetMap component mounted');
       nextTick(() => {
-        console.log('🔄 Next tick - initializing component...');
-        try {
-          initializeMap();
-          if (props.content?.requestGeolocation) {
-            console.log('Requesting user location...');
-            requestUserLocation();
-          }
-
-          setTimeout(() => {
-            safeInvalidateSize();
-          }, 100);
-        } catch (error) {
-          console.error('❌ OpenStreetMap: Failed to initialize map:', error);
-          console.error('Error details:', {
-            message: error.message,
-            stack: error.stack,
-            wwLibAvailable: typeof wwLib !== 'undefined',
-            mapContainerRef: !!mapContainer.value
-          });
+        initializeMap();
+        if (props.content?.requestGeolocation) {
+          requestUserLocation();
         }
+
+        setTimeout(() => {
+          safeInvalidateSize();
+        }, 100);
       });
     });
 
@@ -2350,10 +1608,13 @@ export default {
 .openstreet-map {
   position: relative;
   width: 100%;
+  height: var(--map-height);
+  min-height: 200px;
 
   .map-container {
     width: 100%;
     height: 100%;
+    min-height: 200px;
     background: #f0f0f0;
     position: relative;
   }

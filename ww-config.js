@@ -1,5 +1,4 @@
 export default {
-  name: "OpenStreetMap",
   editor: {
     label: {
       en: "OpenStreet Map",
@@ -58,7 +57,7 @@ export default {
       },
       type: "Length",
       section: "style",
-      defaultValue: "400px",
+      defaultValue: "100%",
       bindable: true,
     },
 
@@ -311,33 +310,6 @@ export default {
       section: "settings",
       defaultValue: false,
       bindable: true,
-      /* wwEditor:start */
-      bindingValidation: {
-        type: "boolean",
-        tooltip: "Allow users to click on map to mark their location"
-      },
-      propertyHelp: "When enabled, users can click on the map to set a location marker. Works at zoom levels >= Location Zoom Threshold."
-      /* wwEditor:end */
-    },
-    locationZoomThreshold: {
-      label: {
-        en: "Location Zoom Threshold",
-      },
-      type: "Number",
-      section: "settings",
-      defaultValue: 8,
-      min: 1,
-      max: 18,
-      step: 1,
-      bindable: true,
-      hidden: content => !content?.allowClickToMark,
-      /* wwEditor:start */
-      bindingValidation: {
-        type: "number",
-        tooltip: "Zoom level threshold for location selection (1-18)"
-      },
-      propertyHelp: "At this zoom level and higher, boundaries hide and users can click to mark locations. Below this level, country/state boundaries are shown and clickable. Default: 8"
-      /* wwEditor:end */
     },
 
     // Reverse Geocoding Configuration
@@ -421,7 +393,7 @@ export default {
       },
       type: "Number",
       section: "countries",
-      defaultValue: 7,
+      defaultValue: 18,
       min: 1,
       max: 18,
       step: 1,
@@ -432,7 +404,7 @@ export default {
         type: "number",
         tooltip: "Maximum zoom level to show country boundaries (1-18)"
       },
-      propertyHelp: "Countries will only show when zoom level is <= this value. Default is 7 to hide boundaries at zoom 8+ (location selection mode)."
+      propertyHelp: "Countries will only show when zoom level is <= this value"
       /* wwEditor:end */
     },
     countryHoverColor: {
@@ -573,7 +545,7 @@ export default {
       },
       type: "Number",
       section: "states",
-      defaultValue: 7,
+      defaultValue: 18,
       min: 1,
       max: 18,
       step: 1,
@@ -584,7 +556,7 @@ export default {
         type: "number",
         tooltip: "Maximum zoom level to show state boundaries (1-18)"
       },
-      propertyHelp: "States will only show when zoom level is <= this value. Default is 7 to hide boundaries at zoom 8+ (location selection mode)."
+      propertyHelp: "States will only show when zoom level is <= this value"
       /* wwEditor:end */
     },
     stateHoverColor: {
@@ -678,21 +650,6 @@ export default {
       bindingValidation: {
         type: "number",
         tooltip: "Opacity of selected state color (0-1)"
-      },
-      /* wwEditor:end */
-    },
-    selectedLocationMarkerColor: {
-      label: {
-        en: "Selected Location Marker Color"
-      },
-      type: "Color",
-      section: "settings",
-      defaultValue: "#FF5722",
-      bindable: true,
-      /* wwEditor:start */
-      bindingValidation: {
-        type: "string",
-        tooltip: "Color for selected location markers"
       },
       /* wwEditor:end */
     },
@@ -841,7 +798,7 @@ export default {
     { name: "location-granted", label: "Location permission granted", event: { position: {} } },
     { name: "location-denied", label: "Location permission denied", event: {} },
     { name: "location-marked", label: "Location marked by click", event: { position: {} } },
-    { name: "map-click", label: "Map clicked", event: { position: {}, zoom: 0, mode: "" } },
+    { name: "map-click", label: "Map clicked", event: { position: {} } },
     { name: "map-ready", label: "Map initialized", event: {} },
     { name: "privacy-mode-toggled", label: "Privacy mode toggled", event: { enabled: false, previousMode: "" } },
     // Reverse Geocoding Events
@@ -861,10 +818,7 @@ export default {
     { name: "state-hover-out", label: "State hover ended", event: { state: {} } },
     { name: "state-click", label: "State clicked", event: { state: {}, coordinates: {}, action: "" } },
     { name: "state-selected", label: "State selected", event: { state: {} } },
-    { name: "state-deselected", label: "State deselected", event: { state: {} } },
-    // Error and Limit Events
-    { name: "boundary-load-error", label: "Boundary loading error", event: { error: "", type: "" } },
-    { name: "selection-limit-reached", label: "Selection limit reached", event: { type: "", limit: 0, message: "" } },
-    { name: "location-deselected", label: "Location deselected", event: { location: {}, position: {} } }
+    { name: "state-deselected", label: "State deselected", event: { state: {} } }
   ]
 };
+
