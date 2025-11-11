@@ -616,7 +616,7 @@ export default {
       try {
         map.value.invalidateSize();
       } catch (error) {
-        // Silent fail - map size invalidation not critical
+        logError('[Map] Failed to invalidate size:', error);
       }
     };
 
@@ -733,7 +733,7 @@ export default {
           map.value.addLayer(markersLayer.value);
         }
       } catch (error) {
-        // Silent fail - marker update errors handled gracefully
+        logError('[Markers] Failed to update user markers:', error);
       }
     };
 
@@ -751,7 +751,7 @@ export default {
 
         userLocationMarker.value.setIcon(newIcon);
       } catch (error) {
-        // Silent fail - marker icon update not critical
+        logError('[Marker] Failed to update user location marker icon:', error);
       }
     };
 
@@ -909,7 +909,7 @@ export default {
           debouncedReverseGeocode(latitude, longitude, 'user-location-geocoded');
         }
       } catch (error) {
-        // Silent fail - user location marker not critical
+        logError('[Location] Failed to set user location marker:', error);
       }
     };
 
@@ -1121,7 +1121,7 @@ export default {
           debouncedReverseGeocode(lat, lng, 'marked-location-geocoded');
         }
       } catch (error) {
-        // Silent fail - marked location marker not critical
+        logError('[Location] Failed to set marked location marker:', error);
       }
     };
 
