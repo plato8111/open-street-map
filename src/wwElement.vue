@@ -1269,13 +1269,23 @@ export default {
     };
 
     const renderCountryBoundaries = (boundaries) => {
+      console.log('🎨 renderCountryBoundaries called with', boundaries.length, 'boundaries');
+      console.log('📄 Sample boundary structure:', boundaries[0]);
 
       if (countryBoundaryLayer.value) {
+        console.log('🗑️ Removing existing boundary layer');
         map.value.removeLayer(countryBoundaryLayer.value);
       }
 
+      console.log('🔄 Converting to GeoJSON...');
       const geoJsonData = boundaryAPI.toGeoJSON(boundaries);
+      console.log('📊 GeoJSON data:', {
+        type: geoJsonData.type,
+        features: geoJsonData.features?.length || 0,
+        sampleFeature: geoJsonData.features?.[0]
+      });
 
+      console.log('🗺️ Creating Leaflet GeoJSON layer...');
       countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
           // Check if this feature is selected
