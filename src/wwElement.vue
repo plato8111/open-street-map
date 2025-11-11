@@ -16,38 +16,22 @@
 </template>
 
 <script>
-// Debug flag - set to false for production to remove all console.logs
-const DEBUG = false;
-const log = DEBUG ? console.log.bind(console) : () => {};
-const logGroup = DEBUG ? console.group.bind(console) : () => {};
-const logGroupEnd = DEBUG ? console.groupEnd.bind(console) : () => {};
-const logWarn = console.warn.bind(console); // Always show warnings
-const logError = console.error.bind(console); // Always show errors
-
-log('📦 Loading Leaflet dependencies...');
 import L from 'leaflet';
-log('✅ Leaflet loaded:', typeof L);
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster';
-log('✅ Leaflet MarkerCluster loaded');
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.heat';
-log('✅ Leaflet Heat loaded');
 import { boundaryAPI, boundaryCache, getSupabaseClient } from './supabaseClient.js';
-log('✅ Supabase client loaded');
 import { vectorTileClient } from './vectorTileClient.js';
-log('✅ Vector tile client loaded');
 
 // Fix Leaflet's default marker icon issue
-log('🔧 Fixing Leaflet marker icons...');
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
   iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
 });
-log('✅ Leaflet marker icons fixed');
 
 export default {
   name: 'OpenStreetMap',
@@ -60,20 +44,7 @@ export default {
   },
   data() {
     // CRITICAL: Ensure wwLib is available as global, with fallback
-    log('🔍 OpenStreetMap: Checking wwLib availability...');
-    log('typeof wwLib:', typeof wwLib);
-    log('wwLib exists:', !!wwLib);
-    log('wwLib.wwVariable exists:', !!(wwLib && wwLib.wwVariable));
-    log('wwLib.wwVariable.useComponentVariable type:', typeof (wwLib && wwLib.wwVariable && wwLib.wwVariable.useComponentVariable));
-
     const hasWwLib = typeof wwLib !== 'undefined' && wwLib && wwLib.wwVariable && typeof wwLib.wwVariable.useComponentVariable === 'function';
-
-    if (!hasWwLib) {
-      logWarn('⚠️ OpenStreetMap: wwLib not fully available - component will use fallback mode');
-      logWarn('Available global objects:', Object.keys(window || global || {}));
-    } else {
-      log('✅ OpenStreetMap: wwLib is fully available');
-    }
 
     // Editor state
     /* wwEditor:start */
@@ -125,7 +96,6 @@ export default {
     const mapContainer = ref(null);
 
     // Internal variables for NoCode users
-    log('🔧 Setting up component variables...');
     const { value: selectedLocation, setValue: setSelectedLocation } = hasWwLib
       ? wwLib.wwVariable.useComponentVariable({
           uid: props.uid,
@@ -134,7 +104,6 @@ export default {
           defaultValue: null,
         })
       : { value: ref(null), setValue: () => {} };
-    log('selectedLocation variable setup:', { hasWwLib, value: selectedLocation.value });
 
     const { value: userLocation, setValue: setUserLocation } = hasWwLib
       ? wwLib.wwVariable.useComponentVariable({
@@ -394,7 +363,7 @@ export default {
           };
         }
       } catch (error) {
-        logError('Error finding parent state:', error);
+        console.error('Error finding parent state:', error);
       }
 
       return null;
@@ -422,7 +391,7 @@ export default {
           };
         }
       } catch (error) {
-        logError('Error finding parent country:', error);
+        console.error('Error finding parent country:', error);
       }
 
       return null;
@@ -601,7 +570,7 @@ export default {
       try {
         map.value.invalidateSize();
       } catch (error) {
-        logError('[Map] Failed to invalidate size:', error);
+        console.error('[Map] Failed to invalidate size:', error);
       }
     };
 
@@ -718,7 +687,7 @@ export default {
           map.value.addLayer(markersLayer.value);
         }
       } catch (error) {
-        logError('[Markers] Failed to update user markers:', error);
+        console.error('[Markers] Failed to update user markers:', error);
       }
     };
 
@@ -736,7 +705,7 @@ export default {
 
         userLocationMarker.value.setIcon(newIcon);
       } catch (error) {
-        logError('[Marker] Failed to update user location marker icon:', error);
+        console.error('[Marker] Failed to update user location marker icon:', error);
       }
     };
 
@@ -894,7 +863,7 @@ export default {
           debouncedReverseGeocode(latitude, longitude, 'user-location-geocoded');
         }
       } catch (error) {
-        logError('[Location] Failed to set user location marker:', error);
+        console.error('[Location] Failed to set user location marker:', error);
       }
     };
 
@@ -1106,7 +1075,7 @@ export default {
           debouncedReverseGeocode(lat, lng, 'marked-location-geocoded');
         }
       } catch (error) {
-        logError('[Location] Failed to set marked location marker:', error);
+        console.error('[Location] Failed to set marked location marker:', error);
       }
     };
 
@@ -1154,7 +1123,6 @@ export default {
         );
 
         if (!response.ok) {
-          logWarn('Geocoding request failed:', response.status);
           return null;
         }
 
@@ -1182,7 +1150,7 @@ export default {
         if (error.name === 'AbortError') {
           return null;
         }
-        logError('Reverse geocoding error:', error);
+        console.error('Reverse geocoding error:', error);
         return null;
       }
     };
@@ -1229,7 +1197,7 @@ export default {
           });
 
         if (countryError) {
-          logWarn('Country detection error:', countryError);
+          // Error occurred
         }
 
         if (countryData && countryData.length > 0) {
@@ -1244,8 +1212,6 @@ export default {
           selectedCountry.value = detectedCountry;
           setSelectedCountryData(detectedCountry);
 
-          log('✅ Detected country:', detectedCountry.name, 'at zoom:', currentZoom);
-
           // Only detect state if zoom >= stateMinZoom
           if (currentZoom >= stateMinZoom) {
             const { data: stateData, error: stateError } = await supabase
@@ -1257,7 +1223,7 @@ export default {
               });
 
             if (stateError) {
-              logWarn('State detection error:', stateError);
+              // Error occurred
             }
 
             if (stateData && stateData.length > 0) {
@@ -1272,14 +1238,11 @@ export default {
               // Update selected state data
               selectedState.value = detectedState;
               setSelectedStateData(detectedState);
-
-              log('✅ Detected state:', detectedState.name, 'at zoom:', currentZoom);
             }
           } else {
             // Clear state data when zoom is below state threshold
             selectedState.value = null;
             setSelectedStateData(null);
-            log('🔍 Zoom too low for state detection (zoom:', currentZoom, '< min:', stateMinZoom + ')');
           }
         }
 
@@ -1289,7 +1252,7 @@ export default {
         };
 
       } catch (error) {
-        logError('Geographic detection error:', error);
+        console.error('Geographic detection error:', error);
         return {
           country: null,
           state: null
@@ -1300,23 +1263,16 @@ export default {
     // Country/State Boundary Rendering
     const loadCountryBoundaries = async () => {
       if (!props.content?.enableCountryHover || !map.value) {
-        log('❌ Country boundaries loading skipped:', {
-          enableCountryHover: props.content?.enableCountryHover,
-          mapExists: !!map.value
-        });
         return;
       }
 
       // Check if Supabase is available
       const supabase = getSupabaseClient();
       if (!supabase) {
-        logWarn('⚠️ Country boundaries disabled: Supabase not configured');
         return;
       }
 
       try {
-        log('🌍 Loading country boundaries...');
-
         const bounds = map.value.getBounds();
         const zoom = map.value.getZoom();
 
@@ -1325,11 +1281,6 @@ export default {
         const maxZoom = props.content?.countryMaxZoom ?? 18;
 
         if (zoom < minZoom || zoom > maxZoom) {
-          log('❌ Country boundaries skipped - zoom out of range:', {
-            currentZoom: zoom,
-            minZoom,
-            maxZoom
-          });
           // Remove existing layer if present
           if (countryBoundaryLayer.value) {
             map.value.removeLayer(countryBoundaryLayer.value);
@@ -1338,18 +1289,9 @@ export default {
           return;
         }
 
-        log('📍 Map bounds:', {
-          west: bounds.getWest(),
-          south: bounds.getSouth(),
-          east: bounds.getEast(),
-          north: bounds.getNorth(),
-          zoom: zoom
-        });
-
         let boundaries;
 
         if (props.content?.useVectorTiles) {
-          log('Using vector tiles for countries');
           await vectorTileClient.init();
           boundaries = await loadCountriesVectorTiles(bounds, zoom);
         } else {
@@ -1357,22 +1299,17 @@ export default {
           const cached = boundaryCache.get(cacheKey);
 
           if (cached) {
-            log('Using cached country boundaries');
             boundaries = cached;
           } else {
-            log('Fetching country boundaries from Supabase');
             boundaries = await boundaryAPI.getCountriesInBounds(bounds, zoom);
             boundaryCache.set(cacheKey, boundaries);
           }
         }
 
         if (!boundaries || boundaries.length === 0) {
-          logWarn('⚠️ No country boundaries loaded');
           return;
         }
 
-        log('✅ Boundaries loaded, count:', boundaries.length);
-        log('📦 Sample boundary:', boundaries[0]);
         renderCountryBoundaries(boundaries);
 
         emit('trigger-event', {
@@ -1381,7 +1318,7 @@ export default {
         });
 
       } catch (error) {
-        logError('Error loading country boundaries:', error);
+        console.error('Error loading country boundaries:', error);
       }
     };
 
@@ -1391,12 +1328,10 @@ export default {
       // Check if Supabase is available
       const supabase = getSupabaseClient();
       if (!supabase) {
-        logWarn('⚠️ State boundaries disabled: Supabase not configured');
         return;
       }
 
       try {
-        log('Loading state boundaries...');
 
         const bounds = map.value.getBounds();
         const zoom = map.value.getZoom();
@@ -1406,11 +1341,6 @@ export default {
         const maxZoom = props.content?.stateMaxZoom ?? 18;
 
         if (zoom < minZoom || zoom > maxZoom) {
-          log('State boundaries skipped - zoom out of range:', {
-            currentZoom: zoom,
-            minZoom,
-            maxZoom
-          });
           // Remove existing layer if present
           if (stateBoundaryLayer.value) {
             map.value.removeLayer(stateBoundaryLayer.value);
@@ -1422,7 +1352,6 @@ export default {
         let boundaries;
 
         if (props.content?.useVectorTiles) {
-          log('Using vector tiles for states');
           await vectorTileClient.init();
           boundaries = await loadStatesVectorTiles(bounds, zoom);
         } else {
@@ -1430,17 +1359,14 @@ export default {
           const cached = boundaryCache.get(cacheKey);
 
           if (cached) {
-            log('Using cached state boundaries');
             boundaries = cached;
           } else {
-            log('Fetching state boundaries from Supabase');
             boundaries = await boundaryAPI.getStatesInBounds(bounds, zoom);
             boundaryCache.set(cacheKey, boundaries);
           }
         }
 
         if (!boundaries || boundaries.length === 0) {
-          logWarn('No state boundaries loaded');
           return;
         }
 
@@ -1452,7 +1378,7 @@ export default {
         });
 
       } catch (error) {
-        logError('Error loading state boundaries:', error);
+        console.error('Error loading state boundaries:', error);
       }
     };
 
@@ -1480,28 +1406,13 @@ export default {
         const fetchTime = performance.now() - startTime;
 
         if (error) {
-          logError('❌ Error loading countries with vector tiles:', error);
+          console.error('❌ Error loading countries with vector tiles:', error);
           return [];
         }
 
         if (!data || data.length === 0) {
-          log('⚠️ No countries found in bounds');
           return [];
         }
-
-        // Calculate data size
-        const dataSize = new Blob([JSON.stringify(data)]).size;
-        const dataSizeKB = (dataSize / 1024).toFixed(2);
-        const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
-
-        // Performance metrics
-        logGroup('📊 Countries Load Performance');
-        log('✅ Features loaded:', data.length);
-        log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
-        log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
-        log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
-        log('🎯 Zoom level:', zoom);
-        logGroupEnd();
 
         // Transform to expected format
         return data.map(country => ({
@@ -1513,7 +1424,7 @@ export default {
           properties: country.properties
         }));
       } catch (err) {
-        logError('❌ Error in loadCountriesVectorTiles:', err);
+        console.error('❌ Error in loadCountriesVectorTiles:', err);
         return [];
       }
     };
@@ -1542,28 +1453,13 @@ export default {
         const fetchTime = performance.now() - startTime;
 
         if (error) {
-          logError('❌ Error loading states with vector tiles:', error);
+          console.error('❌ Error loading states with vector tiles:', error);
           return [];
         }
 
         if (!data || data.length === 0) {
-          log('⚠️ No states found in bounds');
           return [];
         }
-
-        // Calculate data size
-        const dataSize = new Blob([JSON.stringify(data)]).size;
-        const dataSizeKB = (dataSize / 1024).toFixed(2);
-        const dataSizeMB = (dataSize / (1024 * 1024)).toFixed(2);
-
-        // Performance metrics
-        logGroup('📊 States Load Performance');
-        log('✅ Features loaded:', data.length);
-        log('⏱️ Fetch time:', fetchTime.toFixed(2), 'ms');
-        log('📦 Data size:', dataSizeMB > 1 ? `${dataSizeMB} MB` : `${dataSizeKB} KB`);
-        log('⚡ Speed:', ((dataSize / 1024) / (fetchTime / 1000)).toFixed(2), 'KB/s');
-        log('🎯 Zoom level:', zoom);
-        logGroupEnd();
 
         // Transform to expected format
         return data.map(state => ({
@@ -1577,7 +1473,7 @@ export default {
           properties: state.properties
         }));
       } catch (err) {
-        logError('❌ Error in loadStatesVectorTiles:', err);
+        console.error('❌ Error in loadStatesVectorTiles:', err);
         return [];
       }
     };
@@ -1871,14 +1767,11 @@ export default {
     };
 
     const renderCountryBoundaries = (boundaries) => {
-      log('🎨 Rendering country boundaries:', boundaries.length);
-
       if (countryBoundaryLayer.value) {
         map.value.removeLayer(countryBoundaryLayer.value);
       }
 
       const geoJsonData = boundaryAPI.toGeoJSON(boundaries);
-      log('📄 GeoJSON features:', geoJsonData.features.length);
 
       countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
@@ -1922,7 +1815,6 @@ export default {
           countryLayerIndex.value.set(id, layer);
         }
       });
-      log('📇 Country layer index built:', countryLayerIndex.value.size, 'entries');
     };
 
     const renderStateBoundaries = (boundaries) => {
@@ -1974,7 +1866,6 @@ export default {
           stateLayerIndex.value.set(id, layer);
         }
       });
-      log('📇 State layer index built:', stateLayerIndex.value.size, 'entries');
     };
 
     const updateBoundaries = async () => {
@@ -2088,7 +1979,7 @@ export default {
       log('Map container element:', mapContainer.value?.tagName);
 
       if (!mapContainer.value) {
-        logError('❌ Map container not found - cannot initialize map');
+        console.error('❌ Map container not found - cannot initialize map');
         return;
       }
 
@@ -2096,11 +1987,8 @@ export default {
       const lng = props.content?.initialLng || -0.09;
       const zoom = props.content?.initialZoom || 13;
 
-      log('Map config:', { lat, lng, zoom, content: props.content });
-
       try {
         if (map.value) {
-          log('Removing existing map instance');
           map.value.remove();
           map.value = null;
         }
@@ -2110,7 +1998,6 @@ export default {
         const allowInteraction = !isEditing.value;
         /* wwEditor:end */
 
-        log('Creating Leaflet map instance...');
         map.value = L.map(mapContainer.value, {
           /* wwEditor:start */
           dragging: allowInteraction,
@@ -2130,7 +2017,6 @@ export default {
           tap: true,
           trackResize: true
         }).setView([lat, lng], zoom);
-        log('✅ Map instance created successfully');
 
         /* wwEditor:start */
         // Ensure dragging follows editor state
@@ -2154,9 +2040,7 @@ export default {
 
         setupResizeObserver();
 
-        log('Setting up map ready callback...');
         map.value.whenReady(async () => {
-          log('🗺️ Map is ready, initializing features...');
           updateMarkers();
           updatePrivacyMode();
           updateHardinessHeatmap();
@@ -2177,15 +2061,14 @@ export default {
             setCurrentZoomLevel(map.value.getZoom());
           });
 
-          log('✅ Map fully initialized and ready');
           emit('trigger-event', {
             name: 'map-ready',
             event: {}
           });
         });
       } catch (error) {
-        logError('❌ Map initialization failed:', error);
-        logError('Error details:', {
+        console.error('❌ Map initialization failed:', error);
+        console.error('Error details:', {
           message: error.message,
           stack: error.stack,
           wwLibAvailable: typeof wwLib !== 'undefined',
@@ -2319,13 +2202,10 @@ export default {
 
     // Lifecycle
     onMounted(() => {
-      log('🎯 OpenStreetMap component mounted');
       nextTick(() => {
-        log('🔄 Next tick - initializing component...');
         try {
           initializeMap();
           if (props.content?.requestGeolocation) {
-            log('Requesting user location...');
             requestUserLocation();
           }
 
@@ -2333,8 +2213,8 @@ export default {
             safeInvalidateSize();
           }, 100);
         } catch (error) {
-          logError('❌ OpenStreetMap: Failed to initialize map:', error);
-          logError('Error details:', {
+          console.error('❌ OpenStreetMap: Failed to initialize map:', error);
+          console.error('Error details:', {
             message: error.message,
             stack: error.stack,
             wwLibAvailable: typeof wwLib !== 'undefined',
