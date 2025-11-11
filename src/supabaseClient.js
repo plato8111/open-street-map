@@ -108,20 +108,22 @@ export const boundaryAPI = {
    * Get countries from GIS schema
    */
   async getCountriesInBounds(bounds, zoomLevel = 1) {
-    try {
-      const supabase = getSupabaseClient();
+    // Use request queue to limit concurrent requests
+    return supabaseRequestQueue.add(async () => {
+      try {
+        const supabase = getSupabaseClient();
 
-      if (!supabase) {
-        console.error('Supabase client not available');
-        return [];
-      }
+        if (!supabase) {
+          console.error('Supabase client not available');
+          return [];
+        }
 
-      // Try using the gis.get_simplified_boundaries_in_bbox function with spatial filtering
-      if (typeof supabase.rpc === 'function' && bounds) {
-        try {
-          // Call public wrapper function (Supabase JS uses public schema by default)
-          const { data, error } = await supabase
-            .rpc('get_simplified_boundaries_in_bbox', {
+        // Try using the gis.get_simplified_boundaries_in_bbox function with spatial filtering
+        if (typeof supabase.rpc === 'function' && bounds) {
+          try {
+            // Call public wrapper function (Supabase JS uses public schema by default)
+            const { data, error } = await supabase
+              .rpc('get_simplified_boundaries_in_bbox', {
               boundary_type: 'countries',
               zoom_level: zoomLevel,
               bbox_west: bounds.getWest(),
@@ -186,29 +188,32 @@ export const boundaryAPI = {
         geometry_geojson: country.geometry_geojson
       }));
 
-    } catch (err) {
-      console.error('Boundary API error (getCountriesInBounds):', err);
-      return [];
-    }
+      } catch (err) {
+        console.error('Boundary API error (getCountriesInBounds):', err);
+        return [];
+      }
+    });
   },
 
   /**
    * Get states/provinces from GIS schema with spatial filtering
    */
   async getStatesInBounds(bounds, zoomLevel = 6, countryFilter = null) {
-    try {
-      const supabase = getSupabaseClient();
+    // Use request queue to limit concurrent requests
+    return supabaseRequestQueue.add(async () => {
+      try {
+        const supabase = getSupabaseClient();
 
-      if (!supabase) {
-        console.error('Supabase client not available');
-        return [];
-      }
+        if (!supabase) {
+          console.error('Supabase client not available');
+          return [];
+        }
 
-      // Try RPC function with bounds filtering and simplification first
-      if (typeof supabase.rpc === 'function' && bounds) {
-        try {
-          const { data, error} = await supabase
-            .rpc('get_simplified_boundaries_in_bbox', {
+        // Try RPC function with bounds filtering and simplification first
+        if (typeof supabase.rpc === 'function' && bounds) {
+          try {
+            const { data, error} = await supabase
+              .rpc('get_simplified_boundaries_in_bbox', {
               boundary_type: 'states',
               zoom_level: zoomLevel,
               bbox_west: bounds.getWest(),
@@ -285,10 +290,11 @@ export const boundaryAPI = {
         geometry_geojson: state.geometry_geojson
       }));
 
-    } catch (err) {
-      console.error('Boundary API error (getStatesInBounds):', err);
-      return [];
-    }
+      } catch (err) {
+        console.error('Boundary API error (getStatesInBounds):', err);
+        return [];
+      }
+    });
   },
 
 
@@ -345,7 +351,10 @@ export class BoundaryCache {
 
   generateKey(type, bounds, zoomLevel, extra = '') {
     const b = bounds;
-    return `${type}_${b.getSouth()}_${b.getWest()}_${b.getNorth()}_${b.getEast()}_${zoomLevel}_${extra}`;
+    // Round coordinates to 3 decimals (~111m precision) for better cache hits
+    // Prevents cache pollution from tiny coordinate changes on pan
+    const roundCoord = (coord) => Math.round(coord * 1000) / 1000;
+    return `${type}_${roundCoord(b.getSouth())}_${roundCoord(b.getWest())}_${roundCoord(b.getNorth())}_${roundCoord(b.getEast())}_${zoomLevel}_${extra}`;
   }
 
   get(key) {
@@ -380,6 +389,62 @@ export class BoundaryCache {
 
 // Export default cache instance
 export const boundaryCache = new BoundaryCache();
+
+/**
+ * Request Queue to limit concurrent Supabase requests
+ * Prevents database overload and rate limiting issues
+ */
+export class RequestQueue {
+  constructor(maxConcurrent = 3) {
+    this.maxConcurrent = maxConcurrent;
+    this.currentRequests = 0;
+    this.queue = [];
+  }
+
+  async add(requestFn) {
+    // If we're at max capacity, wait
+    if (this.currentRequests >= this.maxConcurrent) {
+      await new Promise(resolve => {
+        this.queue.push(resolve);
+      });
+    }
+
+    this.currentRequests++;
+
+    try {
+      const result = await requestFn();
+      return result;
+    } finally {
+      this.currentRequests--;
+
+      // Process next queued request
+      if (this.queue.length > 0) {
+        const next = this.queue.shift();
+        next();
+      }
+    }
+  }
+
+  clear() {
+    // Resolve all pending promises
+    while (this.queue.length > 0) {
+      const next = this.queue.shift();
+      next();
+    }
+    this.currentRequests = 0;
+  }
+
+  getStats() {
+    return {
+      currentRequests: this.currentRequests,
+      queuedRequests: this.queue.length,
+      maxConcurrent: this.maxConcurrent
+    };
+  }
+}
+
+// Export singleton request queue instance
+export const supabaseRequestQueue = new RequestQueue(3);
 
 // Export the getSupabaseClient function
 export { getSupabaseClient };

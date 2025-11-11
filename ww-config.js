@@ -861,6 +861,10 @@ export default {
     { name: "state-hover-out", label: "State hover ended", event: { state: {} } },
     { name: "state-click", label: "State clicked", event: { state: {}, coordinates: {}, action: "" } },
     { name: "state-selected", label: "State selected", event: { state: {} } },
-    { name: "state-deselected", label: "State deselected", event: { state: {} } }
+    { name: "state-deselected", label: "State deselected", event: { state: {} } },
+    // Error and Limit Events
+    { name: "boundary-load-error", label: "Boundary loading error", event: { error: "", type: "" } },
+    { name: "selection-limit-reached", label: "Selection limit reached", event: { type: "", limit: 0, message: "" } },
+    { name: "location-deselected", label: "Location deselected", event: { location: {}, position: {} } }
   ]
 };

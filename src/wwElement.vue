@@ -2431,6 +2431,14 @@ export default {
   }
 }
 
+:global(.leaflet-pane) {
+  pointer-events: auto !important;
+}
+
+:global(.leaflet-control) {
+  pointer-events: auto;
+}
+
 :global(.user-location-marker) {
   background: transparent;
   border: none;
