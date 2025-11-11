@@ -25,6 +25,7 @@ import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import 'leaflet.heat';
 import { boundaryAPI, boundaryCache, getSupabaseClient } from './supabaseClient.js';
 import { vectorTileClient } from './vectorTileClient.js';
+import { perfMark, perfMeasure, deferWork, throttle } from './performanceUtils.js';
 
 // Fix Leaflet's default marker icon issue
 delete L.Icon.Default.prototype._getIconUrl;
@@ -1999,6 +2000,7 @@ export default {
     };
 
     const initializeMap = () => {
+      perfMark('map-init-start');
       console.log('🗺️ Initializing map...');
       console.log('Map container ref:', mapContainer.value);
       console.log('Map container element:', mapContainer.value?.tagName);
@@ -2070,34 +2072,59 @@ export default {
         map.value.whenReady(async () => {
           if (!map.value) return; // Safety check
 
+          perfMark('map-critical-start');
+
+          // Critical operations only - render markers and privacy mode immediately
           updateMarkers();
           updatePrivacyMode();
-          updateHardinessHeatmap();
-          await updateBoundaries();
-
-          // Initialize location context
           updateLocationContext();
 
           // Attach event listeners only after map is ready
           if (map.value) {
             map.value.on('click', onMapClick);
-            map.value.on('moveend', updateBoundaries);
-            map.value.on('zoomend', () => {
+
+            // Throttle moveend and zoomend handlers to improve performance
+            const throttledUpdateBoundaries = throttle(updateBoundaries, 500);
+            const throttledZoomUpdate = throttle(() => {
               updateBoundaries();
               updateLocationContext();
               setCurrentZoomLevel(map.value.getZoom());
-            });
+            }, 500);
 
-            // Track zoom changes
+            map.value.on('moveend', throttledUpdateBoundaries);
+            map.value.on('zoomend', throttledZoomUpdate);
+
+            // Track zoom changes without throttling
             map.value.on('zoom', () => {
               setCurrentZoomLevel(map.value.getZoom());
             });
           }
 
+          perfMeasure('Map Critical Path', 'map-init-start', 'map-critical-start');
+
+          // Emit ready event BEFORE loading boundaries - don't block rendering
           emit('trigger-event', {
             name: 'map-ready',
             event: {}
           });
+
+          // Defer non-critical operations to after map is visible
+          // This defers boundaries and heatmap loading, improving LCP
+          deferWork(async () => {
+            perfMark('boundaries-load-start');
+            await updateBoundaries();
+            perfMeasure('Boundary Loading', 'boundaries-load-start');
+
+            // Defer heatmap even further
+            deferWork(() => {
+              perfMark('heatmap-load-start');
+              updateHardinessHeatmap();
+              perfMeasure('Heatmap Rendering', 'heatmap-load-start');
+            }, { timeout: 3000 });
+          }, { timeout: 1000 });
+
+          perfMark('map-init-end');
+          perfMeasure('Map Initialization (Critical)', 'map-init-start', 'map-init-end');
         });
       } catch (error) {
         console.error('❌ Map initialization failed:', error);
