@@ -1254,6 +1254,15 @@ export default {
           };
         },
         onEachFeature: (feature, layer) => {
+          // Bind tooltip to show country name on hover
+          if (feature.properties?.name) {
+            layer.bindTooltip(feature.properties.name, {
+              permanent: false,
+              direction: 'top',
+              className: 'boundary-tooltip'
+            });
+          }
+
           layer.on({
             mouseover: (e) => handleCountryHover(e, feature),
             mouseout: (e) => handleCountryHoverOut(e, feature),
@@ -1294,6 +1303,15 @@ export default {
           };
         },
         onEachFeature: (feature, layer) => {
+          // Bind tooltip to show state name on hover
+          if (feature.properties?.name) {
+            layer.bindTooltip(feature.properties.name, {
+              permanent: false,
+              direction: 'top',
+              className: 'boundary-tooltip'
+            });
+          }
+
           layer.on({
             mouseover: (e) => handleStateHover(e, feature),
             mouseout: (e) => handleStateHoverOut(e, feature),
@@ -1888,6 +1906,22 @@ export default {
       transform: none;
       font-size: 12px;
     }
+  }
+}
+
+// Boundary tooltip styling
+:global(.boundary-tooltip) {
+  background: rgba(0, 0, 0, 0.85) !important;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 8px 12px !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  color: white !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+
+  &::before {
+    border-top-color: rgba(0, 0, 0, 0.85) !important;
   }
 }
 </style>
