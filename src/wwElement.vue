@@ -2274,6 +2274,10 @@ export default {
     onMounted(() => {
       nextTick(() => {
         try {
+          if (!mapContainer.value) {
+            console.error('❌ Map container ref not available');
+            return;
+          }
           initializeMap();
           if (props.content?.requestGeolocation) {
             requestUserLocation();
@@ -2430,14 +2434,6 @@ export default {
       margin: 0;
     }
   }
-}
-
-:global(.leaflet-pane) {
-  pointer-events: auto !important;
-}
-
-:global(.leaflet-control) {
-  pointer-events: auto;
 }
 
 :global(.user-location-marker) {
