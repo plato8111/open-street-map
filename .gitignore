@@ -45,3 +45,15 @@ typings/
 # Mac files
 .DS_STORE
 # we only use yarn lock
+
+# Markdown files
+*.md
+
+# Non-WeWeb files and documentation
+extra_*.md
+CLAUDE.md
+GEMINI.md
+*.backup
+*.bak
+.env.local
+.env.*.local
