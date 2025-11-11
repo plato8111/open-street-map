@@ -70,6 +70,7 @@ export default {
     const lastGeocodingRequest = ref(0); // Track last request time for rate limiting
     const geocodingAbortController = ref(null); // Track abort controller for request cancellation
     const boundaryDebounceTimer = ref(null); // Debounce timer for boundary updates
+    const markerDebounceTimer = ref(null); // Debounce timer for marker viewport updates
 
     // Component state
     const geolocationRequested = ref(false);
@@ -243,24 +244,47 @@ export default {
     });
 
     // Methods
-    const setupTileLayers = () => {
-      tileLayers.value = {
-        osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenStreetMap contributors'
-        }),
-        satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-          attribution: '© Esri, DigitalGlobe, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community'
-        }),
-        terrain: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenTopoMap contributors'
-        }),
-        dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-          attribution: '© CartoDB, © OpenStreetMap contributors'
-        }),
-        light: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-          attribution: '© CartoDB, © OpenStreetMap contributors'
-        })
-      };
+    // LAZY LOADING: Create tile layer on-demand instead of creating all upfront
+    const getTileLayer = (type) => {
+      // Return cached layer if it exists
+      if (tileLayers.value[type]) {
+        return tileLayers.value[type];
+      }
+
+      // Create layer on-demand
+      let layer;
+      switch (type) {
+        case 'satellite':
+          layer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: '© Esri, DigitalGlobe, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community'
+          });
+          break;
+        case 'terrain':
+          layer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenTopoMap contributors'
+          });
+          break;
+        case 'dark':
+          layer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© CartoDB, © OpenStreetMap contributors'
+          });
+          break;
+        case 'light':
+          layer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© CartoDB, © OpenStreetMap contributors'
+          });
+          break;
+        case 'osm':
+        default:
+          layer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+          });
+          break;
+      }
+
+      // Cache the layer for reuse
+      tileLayers.value[type] = layer;
+      return layer;
     };
 
     const safeInvalidateSize = () => {
@@ -300,17 +324,19 @@ export default {
     };
 
     const updateMapType = () => {
-      if (!map.value || !tileLayers.value) return;
+      if (!map.value) return;
 
       const newMapType = currentMapType.value;
 
+      // Remove all currently active tile layers
       Object.values(tileLayers.value).forEach(layer => {
         if (map.value.hasLayer(layer)) {
           map.value.removeLayer(layer);
         }
       });
 
-      const selectedLayer = tileLayers.value[newMapType];
+      // Lazy load and add the selected tile layer
+      const selectedLayer = getTileLayer(newMapType);
       if (selectedLayer) {
         selectedLayer.addTo(map.value);
       }
@@ -341,12 +367,16 @@ export default {
         if (!markers.length) return;
 
         if (props.content?.enableClustering) {
+          // Clustering handles viewport optimization automatically
           clusterGroup.value = L.markerClusterGroup({
             maxClusterRadius: 50,
             disableClusteringAtZoom: props.content?.clusterMaxZoom || 15,
             showCoverageOnHover: false,
             zoomToBoundsOnClick: true,
-            spiderfyOnMaxZoom: true
+            spiderfyOnMaxZoom: true,
+            chunkedLoading: true, // Performance: Load markers in chunks
+            chunkInterval: 50, // Performance: Delay between chunks (ms)
+            chunkDelay: 50 // Performance: Delay before starting chunking (ms)
           });
 
           markers.forEach(markerData => {
@@ -372,9 +402,21 @@ export default {
 
           map.value.addLayer(clusterGroup.value);
         } else {
+          // VIRTUALIZATION: Only render markers within viewport (with padding)
+          const bounds = map.value.getBounds();
+          const zoom = map.value.getZoom();
+
+          // Add padding to bounds for smoother experience during panning
+          const paddedBounds = bounds.pad(0.5); // 50% padding on each side
+
+          const visibleMarkers = markers.filter(markerData => {
+            return paddedBounds.contains([markerData.lat, markerData.lng]);
+          });
+
           markersLayer.value = L.layerGroup();
 
-          markers.forEach(markerData => {
+          // Only render markers in viewport
+          visibleMarkers.forEach(markerData => {
             const marker = L.marker([markerData.lat, markerData.lng]);
 
             marker.on('click', () => {
@@ -400,6 +442,17 @@ export default {
       } catch (error) {
         // Silent fail - marker update errors handled gracefully
       }
+    };
+
+    // Debounced version for viewport changes (only updates when clustering is disabled)
+    const debouncedUpdateMarkers = () => {
+      // Only debounce if clustering is disabled (clustering handles its own optimization)
+      if (props.content?.enableClustering) return;
+
+      clearTimeout(markerDebounceTimer.value);
+      markerDebounceTimer.value = setTimeout(() => {
+        updateMarkers();
+      }, 150); // 150ms debounce delay
     };
 
     const updateUserLocationMarker = () => {
@@ -1394,7 +1447,7 @@ export default {
           map.value.dragging.enable();
         }
 
-        setupTileLayers();
+        // Initialize map components (tile layer will be lazy-loaded by updateMapType)
         updateMapType();
         setupResizeObserver();
 
@@ -1402,8 +1455,14 @@ export default {
         map.value.whenReady(async () => {
           // Attach ALL event listeners inside whenReady to prevent null reference errors
           map.value.on('click', onMapClick);
-          map.value.on('moveend', debouncedUpdateBoundaries);
-          map.value.on('zoomend', debouncedUpdateBoundaries);
+          map.value.on('moveend', () => {
+            debouncedUpdateBoundaries();
+            debouncedUpdateMarkers(); // Update visible markers on pan (virtualization)
+          });
+          map.value.on('zoomend', () => {
+            debouncedUpdateBoundaries();
+            debouncedUpdateMarkers(); // Update visible markers on zoom (virtualization)
+          });
 
           // Initialize map features after ready
           updateMarkers();
@@ -1577,6 +1636,11 @@ export default {
       if (boundaryDebounceTimer.value) {
         clearTimeout(boundaryDebounceTimer.value);
         boundaryDebounceTimer.value = null;
+      }
+
+      if (markerDebounceTimer.value) {
+        clearTimeout(markerDebounceTimer.value);
+        markerDebounceTimer.value = null;
       }
 
       // Cancel pending geocoding requests
