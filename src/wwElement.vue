@@ -861,14 +861,13 @@ export default {
           await vectorTileClient.init();
           boundaries = await loadCountriesVectorTiles(bounds, zoom);
         } else {
-          const cacheKey = boundaryCache.generateKey('countries', bounds, zoom);
-          const cached = boundaryCache.get(cacheKey);
+          const cached = boundaryCache.get('countries', bounds);
 
           if (cached) {
             boundaries = cached;
           } else {
             boundaries = await boundaryAPI.getCountriesInBounds(bounds, zoom);
-            boundaryCache.set(cacheKey, boundaries);
+            boundaryCache.set('countries', bounds, boundaries);
           }
         }
 
@@ -914,14 +913,13 @@ export default {
           await vectorTileClient.init();
           boundaries = await loadStatesVectorTiles(bounds, zoom);
         } else {
-          const cacheKey = boundaryCache.generateKey('states', bounds, zoom);
-          const cached = boundaryCache.get(cacheKey);
+          const cached = boundaryCache.get('states', bounds);
 
           if (cached) {
             boundaries = cached;
           } else {
             boundaries = await boundaryAPI.getStatesInBounds(bounds, zoom);
-            boundaryCache.set(cacheKey, boundaries);
+            boundaryCache.set('states', bounds, boundaries);
           }
         }
 
