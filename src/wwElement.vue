@@ -62,8 +62,8 @@ export default {
     const hardinessHeatmapLayer = ref(null);
     const countryBoundaryLayer = ref(null);
     const stateBoundaryLayer = ref(null);
-    const selectedCountry = ref(null);
-    const selectedState = ref(null);
+    const selectedCountries = ref([]); // Multi-select: array of selected country IDs
+    const selectedStates = ref([]); // Multi-select: array of selected state IDs
     const hoveredCountry = ref(null);
     const hoveredState = ref(null);
     const geocodingDebounceTimer = ref(null);
@@ -1081,8 +1081,8 @@ export default {
     const handleCountryHoverOut = (e, feature) => {
       const layer = e.target;
 
-      // Reset style only if this country is not selected (use feature.id)
-      if (selectedCountry.value?.id !== feature.id) {
+      // Reset style only if this country is not selected (multi-select: check if ID is in array)
+      if (!selectedCountries.value.includes(feature.id)) {
         layer.setStyle({
           fillColor: 'transparent',
           fillOpacity: 0
@@ -1098,11 +1098,11 @@ export default {
     };
 
     const handleCountryClick = (e, feature) => {
-      const isCurrentlySelected = selectedCountry.value?.id === feature.id;
+      const isCurrentlySelected = selectedCountries.value.includes(feature.id);
 
       if (isCurrentlySelected) {
-        selectedCountry.value = null;
-        setSelectedCountryData(null);
+        // Deselect: remove from array
+        selectedCountries.value = selectedCountries.value.filter(id => id !== feature.id);
 
         e.target.setStyle({
           fillColor: 'transparent',
@@ -1114,17 +1114,8 @@ export default {
           event: { country: feature.properties }
         });
       } else {
-        if (countryBoundaryLayer.value) {
-          countryBoundaryLayer.value.eachLayer(layer => {
-            layer.setStyle({
-              fillColor: 'transparent',
-              fillOpacity: 0
-            });
-          });
-        }
-
-        selectedCountry.value = feature.properties;
-        setSelectedCountryData(feature.properties);
+        // Select: add to array (multi-select - don't clear others)
+        selectedCountries.value.push(feature.id);
 
         e.target.setStyle({
           fillColor: props.content?.countrySelectedColor || '#0000ff',
@@ -1169,8 +1160,8 @@ export default {
     const handleStateHoverOut = (e, feature) => {
       const layer = e.target;
 
-      // Reset style only if this state is not selected (use feature.id)
-      if (selectedState.value?.id !== feature.id) {
+      // Reset style only if this state is not selected (multi-select: check if ID is in array)
+      if (!selectedStates.value.includes(feature.id)) {
         layer.setStyle({
           fillColor: 'transparent',
           fillOpacity: 0
@@ -1186,11 +1177,11 @@ export default {
     };
 
     const handleStateClick = (e, feature) => {
-      const isCurrentlySelected = selectedState.value?.id === feature.id;
+      const isCurrentlySelected = selectedStates.value.includes(feature.id);
 
       if (isCurrentlySelected) {
-        selectedState.value = null;
-        setSelectedStateData(null);
+        // Deselect: remove from array
+        selectedStates.value = selectedStates.value.filter(id => id !== feature.id);
 
         e.target.setStyle({
           fillColor: 'transparent',
@@ -1202,17 +1193,8 @@ export default {
           event: { state: feature.properties }
         });
       } else {
-        if (stateBoundaryLayer.value) {
-          stateBoundaryLayer.value.eachLayer(layer => {
-            layer.setStyle({
-              fillColor: 'transparent',
-              fillOpacity: 0
-            });
-          });
-        }
-
-        selectedState.value = feature.properties;
-        setSelectedStateData(feature.properties);
+        // Select: add to array (multi-select - don't clear others)
+        selectedStates.value.push(feature.id);
 
         e.target.setStyle({
           fillColor: props.content?.stateSelectedColor || '#0000ff',
@@ -1244,8 +1226,8 @@ export default {
 
       countryBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
-          // Check if this feature is selected (use feature.id, not feature.properties.id)
-          const isSelected = selectedCountry.value?.id === feature?.id;
+          // Check if this feature is selected (multi-select: check if ID is in array)
+          const isSelected = selectedCountries.value.includes(feature?.id);
 
           if (isSelected) {
             return {
@@ -1284,8 +1266,8 @@ export default {
 
       stateBoundaryLayer.value = L.geoJSON(geoJsonData, {
         style: (feature) => {
-          // Check if this feature is selected (use feature.id, not feature.properties.id)
-          const isSelected = selectedState.value?.id === feature?.id;
+          // Check if this feature is selected (multi-select: check if ID is in array)
+          const isSelected = selectedStates.value.includes(feature?.id);
 
           if (isSelected) {
             return {
@@ -1450,7 +1432,9 @@ export default {
           keyboard: true,
           zoomControl: true,
           tap: true,
-          trackResize: true
+          trackResize: true,
+          zoomSnap: 1, // Allow zoom at every integer level (not just 2, 4, 6...)
+          zoomDelta: 1 // Zoom by 1 level per scroll wheel step
         }).setView([lat, lng], zoom);
 
         // Ensure dragging is explicitly enabled
