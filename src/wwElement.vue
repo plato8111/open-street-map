@@ -834,7 +834,13 @@ export default {
 
     // Country/State Boundary Rendering
     const loadCountryBoundaries = async () => {
+      console.log('🔍 loadCountryBoundaries called', {
+        enableCountryHover: props.content?.enableCountryHover,
+        mapExists: !!map.value
+      });
+
       if (!props.content?.enableCountryHover || !map.value) {
+        console.log('❌ Boundaries disabled or map not ready');
         return;
       }
 
@@ -842,11 +848,24 @@ export default {
         const bounds = map.value.getBounds();
         const zoom = map.value.getZoom();
 
+        console.log('📍 Current map state:', {
+          zoom,
+          bounds: {
+            north: bounds.getNorth(),
+            south: bounds.getSouth(),
+            east: bounds.getEast(),
+            west: bounds.getWest()
+          }
+        });
+
         // Check zoom level constraints
         const minZoom = props.content?.countryMinZoom ?? 1;
         const maxZoom = props.content?.countryMaxZoom ?? 18;
 
+        console.log('🎯 Zoom constraints:', { zoom, minZoom, maxZoom });
+
         if (zoom < minZoom || zoom > maxZoom) {
+          console.log('⚠️ Zoom level out of range, removing existing layer');
           // Remove existing layer if present
           if (countryBoundaryLayer.value) {
             map.value.removeLayer(countryBoundaryLayer.value);
@@ -863,26 +882,38 @@ export default {
           west: bounds.getWest()
         };
 
+        console.log('📦 Bounds object for API:', boundsObj);
+
         let boundaries;
 
         if (props.content?.useVectorTiles) {
+          console.log('🗺️ Using vector tiles');
           await vectorTileClient.init();
           boundaries = await loadCountriesVectorTiles(bounds, zoom);
         } else {
+          console.log('📡 Using Supabase API');
           const cached = boundaryCache.get('countries', boundsObj);
 
           if (cached) {
+            console.log('✅ Using cached boundaries:', cached.length, 'items');
             boundaries = cached;
           } else {
+            console.log('🔄 Fetching from Supabase...');
             boundaries = await boundaryAPI.getCountriesInBounds(boundsObj, zoom);
+            console.log('📥 Received boundaries:', boundaries?.length || 0, 'items');
+            if (boundaries && boundaries.length > 0) {
+              console.log('📄 Sample boundary:', boundaries[0]);
+            }
             boundaryCache.set('countries', boundsObj, boundaries);
           }
         }
 
         if (!boundaries || boundaries.length === 0) {
+          console.log('❌ No boundaries data received');
           return;
         }
 
+        console.log('✅ Rendering', boundaries.length, 'country boundaries');
         renderCountryBoundaries(boundaries);
 
         emit('trigger-event', {
