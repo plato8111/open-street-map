@@ -2036,9 +2036,13 @@ export default {
         setupTileLayers();
         updateMapType();
 
-        map.value.on('click', onMapClick);
-
         setupResizeObserver();
+
+        // Add null check before calling whenReady()
+        if (!map.value) {
+          console.error('❌ Map instance is null after creation');
+          return;
+        }
 
         map.value.whenReady(async () => {
           updateMarkers();
@@ -2049,6 +2053,8 @@ export default {
           // Initialize location context
           updateLocationContext();
 
+          // Attach ALL event listeners inside whenReady()
+          map.value.on('click', onMapClick);
           map.value.on('moveend', updateBoundaries);
           map.value.on('zoomend', () => {
             updateBoundaries();
