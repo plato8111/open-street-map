@@ -71,6 +71,8 @@ export default {
     const geocodingAbortController = ref(null); // Track abort controller for request cancellation
     const boundaryDebounceTimer = ref(null); // Debounce timer for boundary updates
     const markerDebounceTimer = ref(null); // Debounce timer for marker viewport updates
+    const lastCountryHover = ref(0); // Throttle timestamp for country hover
+    const lastStateHover = ref(0); // Throttle timestamp for state hover
 
     // Component state
     const geolocationRequested = ref(false);
@@ -1074,6 +1076,13 @@ export default {
     };
 
     const handleCountryHover = (e, feature) => {
+      // Throttle hover events to max 10/second (100ms interval)
+      const now = Date.now();
+      if (now - lastCountryHover.value < 100) {
+        return; // Skip this event
+      }
+      lastCountryHover.value = now;
+
       const layer = e.target;
 
       hoveredCountry.value = feature.properties;
@@ -1158,6 +1167,13 @@ export default {
     };
 
     const handleStateHover = (e, feature) => {
+      // Throttle hover events to max 10/second (100ms interval)
+      const now = Date.now();
+      if (now - lastStateHover.value < 100) {
+        return; // Skip this event
+      }
+      lastStateHover.value = now;
+
       const layer = e.target;
 
       hoveredState.value = feature.properties;
