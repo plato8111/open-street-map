@@ -71,8 +71,8 @@ export default {
     const geocodingAbortController = ref(null); // Track abort controller for request cancellation
     const boundaryDebounceTimer = ref(null); // Debounce timer for boundary updates
     const markerDebounceTimer = ref(null); // Debounce timer for marker viewport updates
-    const lastCountryHover = ref(0); // Throttle timestamp for country hover
-    const lastStateHover = ref(0); // Throttle timestamp for state hover
+    const countryHoverTimer = ref(null); // Delay timer for country hover data exposure (1 second)
+    const stateHoverTimer = ref(null); // Delay timer for state hover data exposure (1 second)
 
     // Component state
     const geolocationRequested = ref(false);
@@ -1076,17 +1076,14 @@ export default {
     };
 
     const handleCountryHover = (e, feature) => {
-      // Throttle hover events to max 10/second (100ms interval)
-      const now = Date.now();
-      if (now - lastCountryHover.value < 100) {
-        return; // Skip this event
-      }
-      lastCountryHover.value = now;
-
       const layer = e.target;
 
+      // Clear any existing timer
+      if (countryHoverTimer.value) {
+        clearTimeout(countryHoverTimer.value);
+      }
+
       hoveredCountry.value = feature.properties;
-      setHoveredCountryData(feature.properties); // Expose hovered country data
 
       // Don't change color if country is already selected
       if (!selectedCountries.value.includes(feature.id)) {
@@ -1096,17 +1093,28 @@ export default {
         });
       }
 
-      emit('trigger-event', {
-        name: 'country-hover',
-        event: {
-          country: feature.properties,
-          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
-        }
-      });
+      // Delay data exposure by 1 second - user must hover for at least 1s
+      countryHoverTimer.value = setTimeout(() => {
+        setHoveredCountryData(feature.properties); // Expose hovered country data after 1 second
+
+        emit('trigger-event', {
+          name: 'country-hover',
+          event: {
+            country: feature.properties,
+            coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
+          }
+        });
+      }, 1000); // 1 second delay
     };
 
     const handleCountryHoverOut = (e, feature) => {
       const layer = e.target;
+
+      // Clear the hover timer - prevents data exposure if mouse leaves before 1 second
+      if (countryHoverTimer.value) {
+        clearTimeout(countryHoverTimer.value);
+        countryHoverTimer.value = null;
+      }
 
       // Reset style only if this country is not selected (multi-select: check if ID is in array)
       if (!selectedCountries.value.includes(feature.id)) {
@@ -1167,17 +1175,14 @@ export default {
     };
 
     const handleStateHover = (e, feature) => {
-      // Throttle hover events to max 10/second (100ms interval)
-      const now = Date.now();
-      if (now - lastStateHover.value < 100) {
-        return; // Skip this event
-      }
-      lastStateHover.value = now;
-
       const layer = e.target;
 
+      // Clear any existing timer
+      if (stateHoverTimer.value) {
+        clearTimeout(stateHoverTimer.value);
+      }
+
       hoveredState.value = feature.properties;
-      setHoveredStateData(feature.properties); // Expose hovered state data
 
       // Don't change color if state is already selected
       if (!selectedStates.value.includes(feature.id)) {
@@ -1187,17 +1192,28 @@ export default {
         });
       }
 
-      emit('trigger-event', {
-        name: 'state-hover',
-        event: {
-          state: feature.properties,
-          coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
-        }
-      });
+      // Delay data exposure by 1 second - user must hover for at least 1s
+      stateHoverTimer.value = setTimeout(() => {
+        setHoveredStateData(feature.properties); // Expose hovered state data after 1 second
+
+        emit('trigger-event', {
+          name: 'state-hover',
+          event: {
+            state: feature.properties,
+            coordinates: { lat: e.latlng.lat, lng: e.latlng.lng }
+          }
+        });
+      }, 1000); // 1 second delay
     };
 
     const handleStateHoverOut = (e, feature) => {
       const layer = e.target;
+
+      // Clear the hover timer - prevents data exposure if mouse leaves before 1 second
+      if (stateHoverTimer.value) {
+        clearTimeout(stateHoverTimer.value);
+        stateHoverTimer.value = null;
+      }
 
       // Reset style only if this state is not selected (multi-select: check if ID is in array)
       if (!selectedStates.value.includes(feature.id)) {
@@ -1676,6 +1692,16 @@ export default {
       if (markerDebounceTimer.value) {
         clearTimeout(markerDebounceTimer.value);
         markerDebounceTimer.value = null;
+      }
+
+      if (countryHoverTimer.value) {
+        clearTimeout(countryHoverTimer.value);
+        countryHoverTimer.value = null;
+      }
+
+      if (stateHoverTimer.value) {
+        clearTimeout(stateHoverTimer.value);
+        stateHoverTimer.value = null;
       }
 
       // Cancel pending geocoding requests
