@@ -1,5 +1,6 @@
 // Vector Tile Client for Supabase MVT integration
 import { getSupabaseClient } from './supabaseClient.js';
+import { debug } from './debugUtils.js';
 
 /**
  * Vector Tile API for efficient boundary rendering
@@ -19,7 +20,7 @@ export class VectorTileClient {
       this.supabase = getSupabaseClient();
       return true;
     } catch (error) {
-      console.error('Failed to initialize vector tile client:', error);
+      debug.error('Failed to initialize vector tile client:', error);
       return false;
     }
   }
@@ -46,7 +47,7 @@ export class VectorTileClient {
       if (!this.supabase) {
         const initialized = await this.init();
         if (!initialized) {
-          console.error('Failed to initialize Supabase client for vector tiles');
+          debug.error('Failed to initialize Supabase client for vector tiles');
           return null;
         }
       }
@@ -74,12 +75,12 @@ export class VectorTileClient {
           });
 
         if (error) {
-          console.error(`Error fetching MVT tile from gis.${functionName}:`, error);
+          debug.error(`Error fetching MVT tile from gis.${functionName}:`, error);
           return null;
         }
         result = data;
       } else {
-        console.error('No RPC method available on Supabase client');
+        debug.error('No RPC method available on Supabase client');
         return null;
       }
 
@@ -90,7 +91,7 @@ export class VectorTileClient {
 
       return result;
     } catch (err) {
-      console.error('Vector tile fetch error:', err);
+      debug.error('Vector tile fetch error:', err);
       return null;
     }
   }
@@ -122,13 +123,13 @@ export class VectorTileClient {
         });
 
       if (error) {
-        console.error('Error checking tile data in gis schema:', error);
+        debug.error('Error checking tile data in gis schema:', error);
         return false;
       }
 
       return data === true;
     } catch (err) {
-      console.error('Tile data check error:', err);
+      debug.error('Tile data check error:', err);
       return false;
     }
   }
@@ -178,7 +179,7 @@ export class VectorTileClient {
           done(null, null); // No data for this tile
         }
       } catch (error) {
-        console.error('Tile load error:', error);
+        debug.error('Tile load error:', error);
         done(error, null);
       }
     };
@@ -195,9 +196,9 @@ export class VectorTileClient {
 
     try {
       await Promise.all(promises);
-      console.log(`Preloaded ${tiles.length} tiles for zoom ${zoomLevel}`);
+      debug.log(`Preloaded ${tiles.length} tiles for zoom ${zoomLevel}`);
     } catch (error) {
-      console.error('Tile preload error:', error);
+      debug.error('Tile preload error:', error);
     }
   }
 
@@ -261,7 +262,7 @@ export function setupMVTProtocol(L) {
     L.TileLayer.prototype._originalCreateTile = L.TileLayer.prototype.createTile;
   }
 
-  console.log('📦 Setting up MVT protocol for Leaflet');
+  debug.log('📦 Setting up MVT protocol for Leaflet');
 }
 
 export default vectorTileClient;
