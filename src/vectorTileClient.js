@@ -195,7 +195,7 @@ export class VectorTileClient {
 
     try {
       await Promise.all(promises);
-      console.log(`Preloaded ${tiles.length} tiles for zoom ${zoomLevel}`);
+      // Tiles preloaded successfully
     } catch (error) {
       console.error('Tile preload error:', error);
     }
@@ -260,8 +260,6 @@ export function setupMVTProtocol(L) {
   if (typeof L.TileLayer.prototype._originalCreateTile === 'undefined') {
     L.TileLayer.prototype._originalCreateTile = L.TileLayer.prototype.createTile;
   }
-
-  console.log('📦 Setting up MVT protocol for Leaflet');
 }
 
 export default vectorTileClient;
