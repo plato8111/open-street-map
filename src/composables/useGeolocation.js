@@ -377,8 +377,8 @@ export function useGeolocation(mapRef, options = {}) {
         });
       }
 
-      // Center map if configured
-      if (content.value?.centerOnUserLocation) {
+      // Center map if configured (default: true)
+      if (content.value?.centerOnUserLocation !== false) {
         map.setView([latitude, longitude], content.value?.initialZoom || 15);
       }
 
