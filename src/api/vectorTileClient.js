@@ -1,5 +1,7 @@
 // Vector Tile Client for Supabase MVT integration
 import { getSupabaseClient } from './supabaseClient.js';
+import { CACHE_LIMITS, ZOOM_THRESHOLDS } from '../config/constants.js';
+import { tileLogger } from '../config/debug.js';
 
 /**
  * Vector Tile API for efficient boundary rendering
@@ -8,24 +10,33 @@ export class VectorTileClient {
   constructor() {
     this.supabase = null;
     this.cache = new Map();
-    this.maxCacheSize = 500; // Limit cache size
+    this.maxCacheSize = CACHE_LIMITS.VECTOR_TILES;
   }
 
   /**
    * Initialize the Supabase client
+   * @returns {Promise<boolean>} Success status
    */
   async init() {
     try {
       this.supabase = getSupabaseClient();
-      return true;
+      if (!this.supabase) {
+        tileLogger.warn('Supabase client not available - MVT features disabled');
+      }
+      return !!this.supabase;
     } catch (error) {
-      console.error('Failed to initialize vector tile client:', error);
+      tileLogger.error('Failed to initialize:', error.message);
       return false;
     }
   }
 
   /**
    * Generate cache key for tiles
+   * @param {number} z - Zoom level
+   * @param {number} x - Tile X coordinate
+   * @param {number} y - Tile Y coordinate
+   * @param {string} type - Boundary type
+   * @returns {string} Cache key
    */
   getCacheKey(z, x, y, type = 'auto') {
     return `${type}_${z}_${x}_${y}`;
@@ -33,6 +44,11 @@ export class VectorTileClient {
 
   /**
    * Get MVT tile from Supabase GIS schema
+   * @param {number} z - Zoom level
+   * @param {number} x - Tile X coordinate
+   * @param {number} y - Tile Y coordinate
+   * @param {string} boundaryType - Type of boundary ('auto', 'countries', 'states')
+   * @returns {Promise<Object|null>} Tile data or null
    */
   async getTile(z, x, y, boundaryType = 'auto') {
     const cacheKey = this.getCacheKey(z, x, y, boundaryType);
@@ -46,57 +62,53 @@ export class VectorTileClient {
       if (!this.supabase) {
         const initialized = await this.init();
         if (!initialized) {
-          console.error('Failed to initialize Supabase client for vector tiles');
           return null;
         }
       }
 
       // Call MVT functions from GIS schema
-      let result;
       if (typeof this.supabase.rpc === 'function') {
-        // Determine which GIS schema function to use based on boundary type and zoom
+        // Determine which GIS schema function to use based on zoom level threshold
         let functionName;
-        if (boundaryType === 'countries' || (boundaryType === 'auto' && z <= 4)) {
+        if (boundaryType === 'countries' || (boundaryType === 'auto' && z <= ZOOM_THRESHOLDS.COUNTRY_TO_STATE)) {
           functionName = 'get_country_mvt_tile';
-        } else if (boundaryType === 'states' || (boundaryType === 'auto' && z > 4)) {
+        } else if (boundaryType === 'states' || (boundaryType === 'auto' && z > ZOOM_THRESHOLDS.COUNTRY_TO_STATE)) {
           functionName = 'get_states_mvt_tile';
         } else {
-          functionName = 'get_country_mvt_tile'; // fallback
+          functionName = 'get_country_mvt_tile';
         }
 
-        // Call RPC function in GIS schema using .schema() method
         const { data, error } = await this.supabase
           .schema('gis')
-          .rpc(functionName, {
-            z: z,
-            x: x,
-            y: y
-          });
+          .rpc(functionName, { z, x, y });
 
         if (error) {
-          console.error(`Error fetching MVT tile from gis.${functionName}:`, error);
+          tileLogger.warn(`RPC error for ${functionName}:`, error.message);
           return null;
         }
-        result = data;
-      } else {
-        console.error('No RPC method available on Supabase client');
-        return null;
+
+        if (data) {
+          this.setCacheItem(cacheKey, data);
+        }
+
+        return data;
       }
 
-      // Only cache successful results
-      if (result) {
-        this.setCacheItem(cacheKey, result);
-      }
-
-      return result;
+      tileLogger.debug('Supabase client does not support RPC');
+      return null;
     } catch (err) {
-      console.error('Vector tile fetch error:', err);
+      tileLogger.error(`Failed to get tile z=${z} x=${x} y=${y}:`, err.message);
       return null;
     }
   }
 
   /**
-   * Check if tile has data (for optimization) - uses GIS schema
+   * Check if tile has data (for optimization)
+   * @param {number} z - Zoom level
+   * @param {number} x - Tile X coordinate
+   * @param {number} y - Tile Y coordinate
+   * @param {string} boundaryType - Type of boundary
+   * @returns {Promise<boolean>} Whether tile has data
    */
   async tileHasData(z, x, y, boundaryType = 'auto') {
     try {
@@ -104,45 +116,36 @@ export class VectorTileClient {
         await this.init();
       }
 
-      // Determine table name based on boundary type and zoom
-      let tableName;
-      if (boundaryType === 'countries' || (boundaryType === 'auto' && z <= 4)) {
-        tableName = 'countries';
-      } else {
-        tableName = 'states';
-      }
+      const tableName = (boundaryType === 'countries' || (boundaryType === 'auto' && z <= ZOOM_THRESHOLDS.COUNTRY_TO_STATE))
+        ? 'countries'
+        : 'states';
 
       const { data, error } = await this.supabase
         .schema('gis')
-        .rpc('tile_has_data', {
-          table_name: tableName,
-          z: z,
-          x: x,
-          y: y
-        });
+        .rpc('tile_has_data', { table_name: tableName, z, x, y });
 
       if (error) {
-        console.error('Error checking tile data in gis schema:', error);
+        tileLogger.warn(`tile_has_data check failed for ${tableName}:`, error.message);
         return false;
       }
 
       return data === true;
     } catch (err) {
-      console.error('Tile data check error:', err);
+      tileLogger.error(`Exception checking tile data z=${z} x=${x} y=${y}:`, err.message);
       return false;
     }
   }
 
   /**
    * Set cache item with size limit
+   * @param {string} key - Cache key
+   * @param {*} data - Data to cache
    */
   setCacheItem(key, data) {
-    // Remove oldest items if cache is full
     if (this.cache.size >= this.maxCacheSize) {
       const firstKey = this.cache.keys().next().value;
       this.cache.delete(firstKey);
     }
-
     this.cache.set(key, data);
   }
 
@@ -154,8 +157,9 @@ export class VectorTileClient {
   }
 
   /**
-   * Get tile URL for Leaflet.VectorGrid
-   * This creates a custom protocol handler for MVT tiles
+   * Get tile URL template for Leaflet.VectorGrid
+   * @param {string} boundaryType - Type of boundary
+   * @returns {string} URL template
    */
   getTileUrlTemplate(boundaryType = 'auto') {
     return `mvt://${boundaryType}/{z}/{x}/{y}`;
@@ -163,22 +167,16 @@ export class VectorTileClient {
 
   /**
    * Create a custom tile loading function for Leaflet
+   * @param {string} boundaryType - Type of boundary
+   * @returns {Function} Tile load function
    */
   createTileLoadFunction(boundaryType = 'auto') {
     return async (coords, done) => {
       const { x, y, z } = coords;
-
       try {
         const tileData = await this.getTile(z, x, y, boundaryType);
-
-        if (tileData) {
-          // Convert the tile data to proper format for Leaflet
-          done(null, tileData);
-        } else {
-          done(null, null); // No data for this tile
-        }
+        done(null, tileData);
       } catch (error) {
-        console.error('Tile load error:', error);
         done(error, null);
       }
     };
@@ -186,28 +184,32 @@ export class VectorTileClient {
 
   /**
    * Preload tiles for a given bounds and zoom level
+   * @param {Object} bounds - Leaflet bounds
+   * @param {number} zoomLevel - Zoom level
+   * @param {string} boundaryType - Type of boundary
    */
   async preloadTiles(bounds, zoomLevel, boundaryType = 'auto') {
     const tiles = this.getTileCoordinates(bounds, zoomLevel);
-    const promises = tiles.map(({x, y, z}) =>
+    const promises = tiles.map(({ x, y, z }) =>
       this.getTile(z, x, y, boundaryType)
     );
 
     try {
       await Promise.all(promises);
-      console.log(`Preloaded ${tiles.length} tiles for zoom ${zoomLevel}`);
     } catch (error) {
-      console.error('Tile preload error:', error);
+      // Preloading is non-critical, just log for debugging
+      tileLogger.debug('Tile preloading had errors (non-fatal):', error.message);
     }
   }
 
   /**
    * Calculate tile coordinates for given bounds and zoom
+   * @param {Object} bounds - Leaflet bounds
+   * @param {number} zoom - Zoom level
+   * @returns {Array} Array of tile coordinates
    */
   getTileCoordinates(bounds, zoom) {
     const tiles = [];
-
-    // Convert lat/lng bounds to tile coordinates
     const minTile = this.latLngToTile(bounds.getSouth(), bounds.getWest(), zoom);
     const maxTile = this.latLngToTile(bounds.getNorth(), bounds.getEast(), zoom);
 
@@ -222,16 +224,22 @@ export class VectorTileClient {
 
   /**
    * Convert lat/lng to tile coordinates
+   * @param {number} lat - Latitude
+   * @param {number} lng - Longitude
+   * @param {number} zoom - Zoom level
+   * @returns {{x: number, y: number}} Tile coordinates
    */
   latLngToTile(lat, lng, zoom) {
     const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
-    const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
-
+    const y = Math.floor(
+      (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom)
+    );
     return { x, y };
   }
 
   /**
    * Get cache statistics
+   * @returns {{size: number, maxSize: number, keys: Array}} Cache stats
    */
   getCacheStats() {
     return {
@@ -244,24 +252,5 @@ export class VectorTileClient {
 
 // Export singleton instance
 export const vectorTileClient = new VectorTileClient();
-
-/**
- * Protocol handler for MVT tiles
- * This allows Leaflet.VectorGrid to load tiles via our custom protocol
- */
-export function setupMVTProtocol(L) {
-  // Only setup once
-  if (L._mvtProtocolSetup) {
-    return;
-  }
-  L._mvtProtocolSetup = true;
-
-  // Store original method if not already stored
-  if (typeof L.TileLayer.prototype._originalCreateTile === 'undefined') {
-    L.TileLayer.prototype._originalCreateTile = L.TileLayer.prototype.createTile;
-  }
-
-  console.log('📦 Setting up MVT protocol for Leaflet');
-}
 
 export default vectorTileClient;

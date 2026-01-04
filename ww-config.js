@@ -51,6 +51,12 @@ export default {
       max: 18,
       step: 1,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Zoom level from 1 (world) to 18 (street level)"
+      },
+      /* wwEditor:end */
     },
     mapHeight: {
       label: {
@@ -60,6 +66,12 @@ export default {
       section: "style",
       defaultValue: "400px",
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS height value (e.g., '400px', '100%', '50vh')"
+      },
+      /* wwEditor:end */
     },
 
     // Map Type Selection
@@ -95,23 +107,29 @@ export default {
       section: "settings",
       defaultValue: true,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Show map type selector control"
+      },
+      /* wwEditor:end */
     },
 
     // Vector Tiles Performance
     useVectorTiles: {
       label: {
-        en: "Use Vector Tiles (Performance)",
+        en: "Use Vector Tiles (Experimental)",
       },
       type: "OnOff",
       section: "settings",
-      defaultValue: true,
+      defaultValue: false,
       bindable: true,
       /* wwEditor:start */
       bindingValidation: {
         type: "boolean",
-        tooltip: "Enable vector tiles for better performance and smaller data transfers"
+        tooltip: "Enable vector tiles for better performance (requires additional setup)"
       },
-      propertyHelp: "Vector tiles provide significantly better performance by generating boundary data as tiles instead of loading full GeoJSON. Reduces data transfer by 90%+ and enables smooth pan/zoom."
+      propertyHelp: "EXPERIMENTAL: Vector tiles provide better performance by generating boundary data as tiles. Currently falls back to GeoJSON mode. Full MVT support requires Leaflet.VectorGrid integration."
       /* wwEditor:end */
     },
 
@@ -165,6 +183,11 @@ export default {
       },
       hidden: (content, sidepanelContent, boundProps) =>
         !Array.isArray(content.markers) || !content.markers?.length || !boundProps.markers,
+      /* wwEditor:start */
+      propertyHelp: {
+        en: "Maps the latitude field from your bound marker data. This field only appears when Markers is bound to external data. Use this when your data source has a different field name (e.g., 'latitude' or 'y' instead of 'lat'). The formula receives each marker item and should return the latitude value. Example: context.mapping?.['latitude']"
+      },
+      /* wwEditor:end */
     },
     markersLngFormula: {
       label: { en: "Longitude Field" },
@@ -179,6 +202,11 @@ export default {
       },
       hidden: (content, sidepanelContent, boundProps) =>
         !Array.isArray(content.markers) || !content.markers?.length || !boundProps.markers,
+      /* wwEditor:start */
+      propertyHelp: {
+        en: "Maps the longitude field from your bound marker data. This field only appears when Markers is bound to external data. Use this when your data source has a different field name (e.g., 'longitude' or 'x' instead of 'lng'). The formula receives each marker item and should return the longitude value. Example: context.mapping?.['longitude']"
+      },
+      /* wwEditor:end */
     },
     markersNameFormula: {
       label: { en: "Name Field" },
@@ -193,6 +221,11 @@ export default {
       },
       hidden: (content, sidepanelContent, boundProps) =>
         !Array.isArray(content.markers) || !content.markers?.length || !boundProps.markers,
+      /* wwEditor:start */
+      propertyHelp: {
+        en: "Maps the name/label field from your bound marker data. This field only appears when Markers is bound to external data. Use this when your data source has a different field name (e.g., 'title', 'label', or 'displayName' instead of 'name'). The formula receives each marker item and should return the display name. Example: context.mapping?.['title']"
+      },
+      /* wwEditor:end */
     },
 
     // Clustering
@@ -204,6 +237,12 @@ export default {
       section: "settings",
       defaultValue: true,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Group nearby markers into clusters"
+      },
+      /* wwEditor:end */
     },
     clusterMaxZoom: {
       label: {
@@ -217,6 +256,12 @@ export default {
       step: 1,
       bindable: true,
       hidden: content => !content?.enableClustering,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Maximum zoom level at which clusters are created (1-18)"
+      },
+      /* wwEditor:end */
     },
 
     // Geolocation
@@ -228,6 +273,12 @@ export default {
       section: "settings",
       defaultValue: true,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Request browser geolocation permission"
+      },
+      /* wwEditor:end */
     },
     showUserLocation: {
       label: {
@@ -237,6 +288,12 @@ export default {
       section: "settings",
       defaultValue: true,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Display marker at user's current location"
+      },
+      /* wwEditor:end */
     },
     centerOnUserLocation: {
       label: {
@@ -247,6 +304,12 @@ export default {
       defaultValue: true,
       bindable: true,
       hidden: content => !content?.showUserLocation,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Center map on user's location when detected"
+      },
+      /* wwEditor:end */
     },
 
     // Privacy Mode
@@ -258,6 +321,12 @@ export default {
       section: "privacy",
       defaultValue: false,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Hide exact user location within privacy radius"
+      },
+      /* wwEditor:end */
     },
     privacyRadius: {
       label: {
@@ -271,6 +340,12 @@ export default {
       step: 0.1,
       bindable: true,
       hidden: content => !content?.enablePrivacyMode,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Privacy radius in kilometers (0.1-50)"
+      },
+      /* wwEditor:end */
     },
     privacyRadiusMiles: {
       label: {
@@ -284,6 +359,12 @@ export default {
       step: 0.1,
       bindable: true,
       hidden: content => !content?.enablePrivacyMode,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Privacy radius in miles (0.1-31)"
+      },
+      /* wwEditor:end */
     },
     privacyUnit: {
       label: {
@@ -300,6 +381,12 @@ export default {
       defaultValue: "km",
       bindable: true,
       hidden: content => !content?.enablePrivacyMode,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "Valid values: km | miles"
+      },
+      /* wwEditor:end */
     },
 
     // Click to Mark Location
@@ -444,6 +531,12 @@ export default {
       defaultValue: "#ff0000",
       bindable: true,
       hidden: content => !content?.enableCountryHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS color value for country hover state"
+      },
+      /* wwEditor:end */
     },
     countryHoverOpacity: {
       label: {
@@ -473,6 +566,12 @@ export default {
       defaultValue: "#666666",
       bindable: true,
       hidden: content => !content?.enableCountryHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS color value for country borders"
+      },
+      /* wwEditor:end */
     },
     countryBorderWidth: {
       label: {
@@ -486,6 +585,12 @@ export default {
       step: 0.5,
       bindable: true,
       hidden: content => !content?.enableCountryHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Border width in pixels (0.5-5)"
+      },
+      /* wwEditor:end */
     },
     countryBorderOpacity: {
       label: {
@@ -499,6 +604,12 @@ export default {
       step: 0.1,
       bindable: true,
       hidden: content => !content?.enableCountryHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Opacity of country borders (0-1)"
+      },
+      /* wwEditor:end */
     },
     countrySelectedColor: {
       label: {
@@ -509,6 +620,12 @@ export default {
       defaultValue: "#0000ff",
       bindable: true,
       hidden: content => !content?.enableCountryHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS color value for selected country"
+      },
+      /* wwEditor:end */
     },
     countrySelectedOpacity: {
       label: {
@@ -596,6 +713,12 @@ export default {
       defaultValue: "#ff0000",
       bindable: true,
       hidden: content => !content?.enableStateHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS color value for state hover"
+      },
+      /* wwEditor:end */
     },
     stateHoverOpacity: {
       label: {
@@ -625,6 +748,12 @@ export default {
       defaultValue: "#666666",
       bindable: true,
       hidden: content => !content?.enableStateHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS color value for state borders"
+      },
+      /* wwEditor:end */
     },
     stateBorderWidth: {
       label: {
@@ -638,6 +767,12 @@ export default {
       step: 0.5,
       bindable: true,
       hidden: content => !content?.enableStateHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Border width in pixels (0.5-5)"
+      },
+      /* wwEditor:end */
     },
     stateBorderOpacity: {
       label: {
@@ -651,6 +786,12 @@ export default {
       step: 0.1,
       bindable: true,
       hidden: content => !content?.enableStateHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Opacity of state borders (0-1)"
+      },
+      /* wwEditor:end */
     },
     stateSelectedColor: {
       label: {
@@ -661,6 +802,12 @@ export default {
       defaultValue: "#0000ff",
       bindable: true,
       hidden: content => !content?.enableStateHover,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS color value for selected state"
+      },
+      /* wwEditor:end */
     },
     stateSelectedOpacity: {
       label: {
@@ -704,6 +851,12 @@ export default {
       section: "settings",
       defaultValue: true,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Whether to use online tile sources"
+      },
+      /* wwEditor:end */
     },
 
     // USDA Hardiness Zone from database
@@ -770,6 +923,11 @@ export default {
       },
       hidden: (content, sidepanelContent, boundProps) =>
         !Array.isArray(content.usersHardinessData) || !content.usersHardinessData?.length || !boundProps.usersHardinessData,
+      /* wwEditor:start */
+      propertyHelp: {
+        en: "Maps the latitude field from your bound user hardiness data. This field only appears when Users Hardiness Data is bound to external data (e.g., a Supabase query). Use this when your data source has a different field name (e.g., 'latitude' or 'user_lat' instead of 'lat'). The formula receives each user item and should return the latitude value. Example: context.mapping?.['latitude']"
+      },
+      /* wwEditor:end */
     },
     usersLngFormula: {
       label: { en: "Users Longitude Field" },
@@ -784,6 +942,11 @@ export default {
       },
       hidden: (content, sidepanelContent, boundProps) =>
         !Array.isArray(content.usersHardinessData) || !content.usersHardinessData?.length || !boundProps.usersHardinessData,
+      /* wwEditor:start */
+      propertyHelp: {
+        en: "Maps the longitude field from your bound user hardiness data. This field only appears when Users Hardiness Data is bound to external data (e.g., a Supabase query). Use this when your data source has a different field name (e.g., 'longitude' or 'user_lng' instead of 'lng'). The formula receives each user item and should return the longitude value. Example: context.mapping?.['longitude']"
+      },
+      /* wwEditor:end */
     },
     usersZoneFormula: {
       label: { en: "Users Hardiness Zone Field" },
@@ -798,6 +961,11 @@ export default {
       },
       hidden: (content, sidepanelContent, boundProps) =>
         !Array.isArray(content.usersHardinessData) || !content.usersHardinessData?.length || !boundProps.usersHardinessData,
+      /* wwEditor:start */
+      propertyHelp: {
+        en: "Maps the USDA hardiness zone field from your bound user data. This field only appears when Users Hardiness Data is bound to external data (e.g., a Supabase query). Use this when your data source has a different field name (e.g., 'zone', 'usda_zone', or 'growing_zone' instead of 'hardinessZone'). The formula receives each user item and should return the zone value (e.g., '7a', '8b'). Example: context.mapping?.['zone']"
+      },
+      /* wwEditor:end */
     },
     showHardinessHeatmap: {
       label: {
@@ -807,6 +975,12 @@ export default {
       section: "hardiness",
       defaultValue: false,
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "boolean",
+        tooltip: "Display heatmap visualization of hardiness zones"
+      },
+      /* wwEditor:end */
     },
     hardinessHeatmapRadius: {
       label: {
@@ -820,6 +994,12 @@ export default {
       step: 10,
       bindable: true,
       hidden: content => !content?.showHardinessHeatmap,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "number",
+        tooltip: "Heatmap point radius in kilometers (10-200)"
+      },
+      /* wwEditor:end */
     },
 
 
@@ -832,6 +1012,12 @@ export default {
       section: "style",
       defaultValue: "8px",
       bindable: true,
+      /* wwEditor:start */
+      bindingValidation: {
+        type: "string",
+        tooltip: "CSS border-radius value (e.g., '8px', '1rem')"
+      },
+      /* wwEditor:end */
     }
   },
   triggerEvents: [
@@ -861,6 +1047,13 @@ export default {
     { name: "state-hover-out", label: "State hover ended", event: { state: {} } },
     { name: "state-click", label: "State clicked", event: { state: {}, coordinates: {}, action: "" } },
     { name: "state-selected", label: "State selected", event: { state: {} } },
-    { name: "state-deselected", label: "State deselected", event: { state: {} } }
+    { name: "state-deselected", label: "State deselected", event: { state: {} } },
+    // Map Bounds Events
+    { name: "map-bounds-change", label: "Map bounds changed", event: { bounds: {}, zoom: 0, center: {} } },
+    // Location Selection Events
+    { name: "location-deselected", label: "Location deselected", event: { location: {}, position: {} } },
+    // Error Events
+    { name: "geocoding-error", label: "Geocoding error", event: { error: "", coordinates: {} } },
+    { name: "supabase-error", label: "Supabase error", event: { error: "" } }
   ]
 };
