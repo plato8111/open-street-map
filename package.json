@@ -4,7 +4,7 @@
   "description": "Interactive OpenStreetMap component with markers, clustering, geolocation, and geographic boundaries",
   "main": "ww-config.js",
   "scripts": {
-    "build": "weweb build -- name=openstreetmap type=wwobject",
+    "build": "weweb build",
     "serve": "weweb serve"
   },
   "devDependencies": {
